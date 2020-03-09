@@ -11,7 +11,7 @@
 #define SUB_PRESS
 #define LEN 100
 
-#define FORCE_LOLD 
+//#define FORCE_LOLD 
 
 #define REMOVE_COM
 int N_TALLY = 6; 
@@ -225,7 +225,7 @@ struct binnit
 						if( strcasecmp(at[a].atname, "CA" ) )
 							continue;			
 					}
-					else if( strcasecmp( at[a].atname, "C2" ) )
+					else if( strcasecmp( at[a].atname, "C2" ) && strcasecmp( at[a].atname, "C1F" ))
 						continue;
 					
 

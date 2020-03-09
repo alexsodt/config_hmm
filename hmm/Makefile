@@ -6,7 +6,7 @@ CC = g++
 ACC = gcc
 
 #FLAG = -gdwarf-2
-FLAG = -O2 
+FLAG = -g 
 
 .C.o: 
 	$(CC) $(GSLINC) -o $*.o -c $(FLAG)  $*.C
@@ -17,7 +17,7 @@ FLAG = -O2
 #EXTLIB = -lm -lmpi -lmpi_cxx -lstdc++
 EXTLIB = -lm -lstdc++
 
-EXECS = convModel GM1HMM.exe
+EXECS = convModel GM1HMM.exe LoLdHMM.exe
 
 all: $(EXECS)
 
@@ -32,3 +32,6 @@ convModel: convModel.o util.o
 
 GM1HMM.exe: GM1HMM.o GM1Network.o HMMAlgorithm.o HMMDirective.o util.o HMMForwardBackward.o Fuzzy.o $(NRMIN)
 	$(CC) -o GM1HMM.exe GM1HMM.o GM1Network.o HMMAlgorithm.o HMMDirective.o util.o HMMForwardBackward.o Fuzzy.o $(NRMIN) $(LDFLAGS) $(GSL) $(EXTLIB)
+
+LoLdHMM.exe: LoLdHMM.o LoLdNetwork.o HMMAlgorithm.o HMMDirective.o util.o HMMForwardBackward.o Fuzzy.o $(NRMIN)
+	$(CC) -o LoLdHMM.exe LoLdHMM.o LoLdNetwork.o HMMAlgorithm.o HMMDirective.o util.o HMMForwardBackward.o Fuzzy.o $(NRMIN) $(LDFLAGS) $(GSL) $(EXTLIB)
