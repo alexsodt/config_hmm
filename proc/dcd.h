@@ -44,4 +44,7 @@ void uncacheDCDHeader( FILE *theFile1 );
 void writeDCDHeader( FILE *theFile, int nat, int nframes );
 void writeFrame( FILE *theFile, struct atom_rec *at, double Lx, double Ly, double Lz );
 
+void getResName( int a, char **);
+void getSegName( int a, char **);
+
 #endif
