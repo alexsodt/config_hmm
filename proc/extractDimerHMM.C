@@ -7,6 +7,31 @@
 #include "comparison.h"
 #include "proc_definition.h"
 
+double normalize( double *dr )
+{
+	double lr = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
+
+	if( fabs(lr) > 0  )
+	{
+		dr[0] /= lr;
+		dr[1] /= lr;
+		dr[2] /= lr;
+	}
+
+	return lr;
+}
+double cross( double *dr1, double *dr2, double *cp )
+{
+	cp[0] = (dr1[1] * dr2[2] - dr1[2] * dr2[1]);
+	cp[1] =-(dr1[0] * dr2[2] - dr1[2] * dr2[0]);
+	cp[2] = (dr1[0] * dr2[1] - dr1[1] * dr2[0]);
+
+	double l = sqrt( cp[0]*cp[0]+cp[1]*cp[1]+cp[2]*cp[2]);
+
+	return l;
+}
+
+
 const double cutoff = 14.0;
 
 double getChi2Symm( double *, double *, int ); 
@@ -65,6 +90,12 @@ int main( int argc, char **argv )
 	{
 		FILE *thePDB = fopen(argv[2],"r");
 		
+		if( !thePDB )
+		{
+			printf("Couldn't open centers file '%s'.\n", argv[2] );
+			return -1;
+		}
+
 		while( !feof(thePDB) )
 		{
 			getLine( thePDB, buffer );
@@ -262,6 +293,9 @@ int main( int argc, char **argv )
 	int *unit_size[2];
 		unit_size[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
 		unit_size[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
+	int *unit_leaflet[2];
+		unit_leaflet[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
+		unit_leaflet[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
 	int nunits[2] = {0,0};
 	int natoms[2] = {0,0};
 
@@ -334,7 +368,13 @@ int main( int argc, char **argv )
 	hbond0_penalty = pair_hbond0_penalty();
 	hbond0_benefit = -hbond0_penalty;
 
-
+	/**** DOPE DOPE hack: remove for distribution ****/
+	double *av_angle = (double *)malloc( sizeof(double) * 52  );
+	double *nav_angle = (double *)malloc( sizeof(double) *  52 );
+	memset( av_angle, 0, sizeof(double) * 52 );
+	memset( nav_angle, 0, sizeof(double) * 52 );
+	int activate_hack = 0;
+	/**** end hack */
 
 	for( int c = 4; c < argc; c++ )
 	{
@@ -434,6 +474,34 @@ int main( int argc, char **argv )
 						strcpy( psegid, at[a].segid );
 					}		
 				}
+
+				for( int pass = 0; pass < 2; pass ++ )
+				for( int u = 0; u < nunits[pass]; u++ )
+				{
+					double n_pos = 0;
+					double av_c_pos = 0;
+					double nav_c_pos = 0;
+
+					for( int a = first_atom[pass][u]; a < first_atom[pass][u] + num_atom[pass][u]; a++ )
+					{
+						if( at[a].atname[0] == 'C' && at[a].atname[1] != '1' && strlen(at[a].atname) > 2 )
+						{
+							av_c_pos += at[a].z;	
+							nav_c_pos += 1;
+						}
+						if( at[a].atname[0] == 'N' )
+							n_pos = at[a].z;
+						
+					}
+
+					av_c_pos /= nav_c_pos;
+
+					if( n_pos > av_c_pos )
+						unit_leaflet[pass][u] = 1;
+					else
+						unit_leaflet[pass][u] = -1;
+				}
+
 
 				unit_r[0] = (double *)malloc( sizeof(double) * 3 * nunits[0] );
 				unit_r[1] = (double *)malloc( sizeof(double) * 3 * nunits[1] );
@@ -537,6 +605,8 @@ int main( int argc, char **argv )
 							tp++;
 						}
 
+
+
 						aStructure tcen_struct;
 
 						tcen_struct.binary_data = binary_hbond;
@@ -613,6 +683,182 @@ int main( int argc, char **argv )
 						gotit->hmm_len += 1;
 
 						free(tcen);
+						
+						int do_DOPE_DOPE = 0;
+						int do_PSM_PSM = 0;
+
+						if( !strcasecmp( at[first_atom[0][u]].resname, "DOPE" ) && !strcasecmp( at[first_atom[1][u2]].resname, "DOPE") )
+							do_DOPE_DOPE = 1;
+						if( !strcasecmp( at[first_atom[0][u]].resname, "PSM" ) && !strcasecmp( at[first_atom[1][u2]].resname, "PSM") )
+							do_PSM_PSM = 1;
+
+						/************* a hack I put in for the PSM/PSM paper, remove for distribution ******/
+						if( do_DOPE_DOPE || do_PSM_PSM )
+						{	// Both DOPE
+							int C21_a = -1;
+							int C31_a = -1;
+							int C21_b = -1;
+							int C31_b = -1;
+							int N_a = -1;
+							int N_b = -1;
+				
+							static int printed_warning = 0;
+
+							if( do_DOPE_DOPE )
+							{
+								for( int ax = 0; ax < unit_size[0][u]; ax++ )
+								{
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "C21" ) )
+										C21_a = atom_list[0][unit_ptr[0][u]+ax];
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "C31" ) )
+										C31_a = atom_list[0][unit_ptr[0][u]+ax];
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "N" ) )
+										N_a = atom_list[0][unit_ptr[0][u]+ax];
+								}
+	
+								for( int ax = 0; ax < unit_size[1][u2]; ax++ )
+								{
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "C21" ) )
+										C21_b = atom_list[1][unit_ptr[1][u2]+ax];
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u]+ax]].atname, "C31" ) )
+										C31_b = atom_list[1][unit_ptr[1][u2]+ax];
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "N" ) )
+										N_b = atom_list[1][unit_ptr[1][u2]+ax];
+								}
+							}
+							else	
+							{
+								for( int ax = 0; ax < unit_size[0][u]; ax++ )
+								{
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "HNF" ) )
+										C21_a = atom_list[0][unit_ptr[0][u]+ax];
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "OF" ) )
+										C31_a = atom_list[0][unit_ptr[0][u]+ax];
+									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "N" ) )
+										N_a = atom_list[0][unit_ptr[0][u]+ax];
+								}
+	
+								for( int ax = 0; ax < unit_size[1][u2]; ax++ )
+								{
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "HNF" ) )
+										C21_b = atom_list[1][unit_ptr[1][u2]+ax];
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u]+ax]].atname, "OF" ) )
+										C31_b = atom_list[1][unit_ptr[1][u2]+ax];
+									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "N" ) )
+										N_b = atom_list[1][unit_ptr[1][u2]+ax];
+								}
+							}	
+							if( (C21_a == -1 || C31_a == -1 || C21_b == -1 ||  C31_b == -1) )
+							{
+								if( !printed_warning )
+									printf("HACK present but couldn't find the atoms we expected.\n");
+								printed_warning = 1;
+							}
+							else	
+							{
+								double orientation_A = unit_leaflet[0][u];
+								double orientation_B = unit_leaflet[1][u2];
+
+								double dr_A[3] = { at[C21_a].x - at[C31_a].x,
+										   at[C21_a].y - at[C31_a].y,
+										   at[C21_a].z - at[C31_a].z };
+								double dr_B[3] = { at[C21_b].x - at[C31_b].x,
+										   at[C21_b].y - at[C31_b].y,
+										   at[C21_b].z - at[C31_b].z };
+								double dr_cen[3] = {    (at[C21_a].x + at[C31_a].x)/2 - (at[C21_b].x + at[C31_b].x)/2, 
+											(at[C21_a].y + at[C31_a].y)/2 - (at[C21_b].y + at[C31_b].y)/2, 
+								 			(at[C21_a].z + at[C31_a].z)/2 - (at[C21_b].z + at[C31_b].z)/2 }; 
+			
+
+								while( dr_cen[0] < -La/2 ) dr_cen[0]+=La;
+								while( dr_cen[0] >  La/2 ) dr_cen[0]-=La;
+								while( dr_cen[1] < -Lb/2 ) dr_cen[1]+=Lb;
+								while( dr_cen[1] >  Lb/2 ) dr_cen[1]-=Lb;
+								while( dr_cen[2] < -Lc/2 ) dr_cen[2]+=Lc;
+								while( dr_cen[2] >  Lc/2 ) dr_cen[2]-=Lc;
+								normalize(dr_A);
+								normalize(dr_B);
+								normalize(dr_cen);					
+								// make dr_A point at b. dr_cen is A - B, dr_A should have neg dot.
+								if( dr_A[0] * dr_cen[0] + dr_A[1] * dr_cen[1] + dr_A[2] * dr_cen[2] > 0 )
+								{
+									dr_A[0] *= -1;
+									dr_A[1] *= -1;
+									dr_A[2] *= -1;
+								} 
+								// make dr_A point at b. dr_cen is A - B, dr_B should have pos dot.
+								if( dr_B[0] * dr_cen[0] + dr_B[1] * dr_cen[1] + dr_B[2] * dr_cen[2] < 0 )
+								{
+									dr_B[0] *= -1;
+									dr_B[1] *= -1;
+									dr_B[2] *= -1;
+								} 
+								double phi_1 = (180.0/M_PI)*(orientation_A * dr_A[2] < 0 ? -1 : 1 ) * fabs(asin( dr_A[2] ));
+								double phi_2 = (180.0/M_PI)*(orientation_B * dr_B[2] < 0 ? -1 : 1 ) * fabs(asin( dr_B[2] ));
+								
+//								double dp = dr_A[0] * dr_B[0] + dr_A[1] * dr_B[1] + dr_A[2] * dr_B[2];
+//								double phi = (180.0/M_PI) * acos(dp);
+//								if( phi_1 + phi_2 < 0 ) phi *= -1;
+
+								activate_hack = 1;
+
+							
+								double nrm_A[3] = {0,0, (orientation_A < 0 ? -1. : 1.) };
+								double nrm_B[3] = {0,0, (orientation_B < 0 ? -1. : 1.) };
+					
+								double aux_A[3], ori_A[3];
+								cross( nrm_A, dr_A, aux_A );
+								cross(  dr_A, aux_A,ori_A );	
+								
+								double aux_B[3], ori_B[3];
+								cross( nrm_B, dr_B, aux_B );
+								cross( dr_B, aux_B,  ori_B );	
+
+								double perp_sub[3];
+								cross( nrm_A, dr_cen, perp_sub );
+								normalize(perp_sub);
+				
+								double dp_per_A = ori_A[0] * perp_sub[0] + ori_A[1] * perp_sub[1] + ori_A[2] * perp_sub[2];
+								double dp_per_B = ori_B[0] * perp_sub[0] + ori_B[1] * perp_sub[1] + ori_B[2] * perp_sub[2];
+
+								ori_A[0] -= dp_per_A * perp_sub[0];
+								ori_A[1] -= dp_per_A * perp_sub[1];
+								ori_A[2] -= dp_per_A * perp_sub[2];
+
+								ori_B[0] -= dp_per_B * perp_sub[0];
+								ori_B[1] -= dp_per_B * perp_sub[1];
+								ori_B[2] -= dp_per_B * perp_sub[2];
+
+
+
+								double dp_ori_cen_A = ori_A[0] * dr_cen[0] + ori_A[1] * dr_cen[1] + ori_A[2] * dr_cen[2];
+								double dp_ori_cen_B = ori_B[0] * dr_cen[0] + ori_B[1] * dr_cen[1] + ori_B[2] * dr_cen[2];
+
+								// component  in the dr_AB x z plane.
+								normalize(ori_A);
+								normalize(ori_B);
+								double alt_phi_1 = (180.0/M_PI)*(dp_ori_cen_A < 0 ? -1  : 1 ) * acos( fabs(ori_A[2]) );
+								double alt_phi_2 = (180.0/M_PI)*(dp_ori_cen_B > 0 ? -1  : 1 ) * acos( fabs(ori_B[2]) );
+
+								if( best_match == 3 && 0)
+								{
+									printf("%d %d phi1/2: %lf %lf alt phi1/2: %lf %lf\n", 
+										at[first_atom[0][u]].res,
+										at[first_atom[1][u2]].res,
+											phi_1, phi_2, alt_phi_1, alt_phi_2 );
+								}
+
+								if( best_match >=0 && best_match < 52 )
+								{
+									av_angle[best_match] += alt_phi_1+alt_phi_2;
+									nav_angle[best_match] += 1;
+								}
+							}
+						} 
+
+
+						/************* end hack *****/
+
 
 					} 
 				}
@@ -730,6 +976,15 @@ int main( int argc, char **argv )
 	fprintf(hmmFile, "STOP\n");			
 	
 	fclose(hmmFile);
+
+	if( activate_hack  )
+	{
+		FILE *dopeData = fopen("dope_data.txt","w");
+
+		for( int  i = 0;  i < 52; i++ )
+			fprintf(dopeData,"%c %lf %lf\n", (i < 26 ? 'A' + i : 'a' + (i-26) ), av_angle[i] / nav_angle[i], nav_angle[i] );
+		fclose(dopeData);
+	}
 }
 
 

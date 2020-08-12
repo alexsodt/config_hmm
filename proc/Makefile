@@ -6,17 +6,19 @@ F77 = mpif77
 
 LDFLAGS = 
 
+COPT = -g 
+
 .C.o: 
 	$(CC) $(GSLINC) \
-		 -o $*.o -c -g  -std=gnu++11 $*.C
+		 -o $*.o -c $(COPT)  -std=gnu++11 $*.C
 
 .c.o:
-	gcc  -g $(QHULL)	$(COPT) $(CDEFN)	-c	$*.c
+	gcc  $(QHULL)	$(COPT) $(CDEFN)	-c	$*.c
 
 .f.o:
-	$(F77) -g -c $*.f -o $*.o
+	$(F77)  -c $*.f -o $*.o
 
-EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe make_dbg_data EncodeHMMLipidAllAtom
+EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe make_dbg_data EncodeHMMLipidAllAtom curvFromModeRange multistateStats.exe cholHMM.exe estimatedFdR.exe
  
 all: $(EXECS)
 
@@ -289,3 +291,15 @@ make_dbg_data: make_dbg_data.o util.o pdb.o dcd.o alignSet.o lapack.a blas.a
 
 EncodeHMMLipidAllAtom: EncodeHMMLipidAllAtom.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a 
 	$(CC) $(LDFLAGS) -o EncodeHMMLipidAllAtom EncodeHMMLipidAllAtom.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a -lgfortran 
+
+curvFromModeRange: curvFromModeRange.o util.o
+	$(CC) -o curvFromModeRange curvFromModeRange.o util.o
+
+multistateStats.exe: multistateStats.o util.o  alignSet.o dcd.o pdb.o blas.a lapack.a proc_definition.o
+	$(CC) -o multistateStats.exe multistateStats.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+
+cholHMM.exe: cholHMM.o util.o
+	$(CC) -o cholHMM.exe cholHMM.o util.o
+
+estimatedFdR.exe: estimatedFdR.o util.o
+	$(CC) -o estimatedFdR.exe estimatedFdR.o util.o

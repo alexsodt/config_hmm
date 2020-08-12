@@ -137,9 +137,12 @@ int main( int argc, char **argv )
 	int max_s=64;
 	char *surfaceAtoms[max_s];
 	char *tailAtoms[max_s];
+	char *res_surfaceAtoms[max_s];
+	char *res_tailAtoms[max_s];
 
-	int n_atoms_check = decodeString(argv[4],surfaceAtoms,max_s);
-	int n_tatoms_check = decodeString(argv[5],tailAtoms,max_s);
+
+	int n_atoms_check = decodeString(argv[4],surfaceAtoms,res_surfaceAtoms,max_s);
+	int n_tatoms_check = decodeString(argv[5],tailAtoms,res_tailAtoms,max_s);
 
 	int *leaflet = (int *)malloc( sizeof(int) * nat );
 	
@@ -158,6 +161,23 @@ int main( int argc, char **argv )
 
 	int pres = at_leaflet[0].res;
 	int res_atom_start = 0;
+
+	// center of mass from input pdb file. need not be zero centered.
+	double leaflet_av_z = 0;
+	double leaflet_n = 0;
+	for( int ta = 0; ta < nat; ta++ )
+	{
+		for( int xa = 0; xa < n_atoms_check; xa++ )
+		{
+			if( !strcasecmp( at[ta].atname, surfaceAtoms[xa] ) && (!strcasecmp( "any", res_surfaceAtoms[xa]) || !strcasecmp( at[ta].resname, res_surfaceAtoms[xa])) )
+			{
+				leaflet_av_z += at_leaflet[ta].z;
+				leaflet_n += 1;
+			}
+		}
+	}
+	leaflet_av_z /= leaflet_n;
+
 	for( int a = 0; a <= nat; a++ )
 	{
 		if( a == nat || at[a].res != pres )
@@ -169,7 +189,7 @@ int main( int argc, char **argv )
 				// get the leaflet from the phosphorous atom if it's there.
 				if( at_leaflet[ta].atname[0] == 'P' ) 
 				{
-					if( at_leaflet[ta].z < 0 )
+					if( at_leaflet[ta].z < leaflet_av_z )
 						cur_leaflet = -1;
 					else
 						cur_leaflet = 1;
@@ -177,9 +197,9 @@ int main( int argc, char **argv )
 				// alternatively, get the leaflet from the surfaceAtom since we know it's there.
 				for( int xa = 0; xa < n_atoms_check; xa++ )
 				{
-					if( !strcasecmp( at[ta].atname, surfaceAtoms[xa] ) )
+					if( !strcasecmp( at[ta].atname, surfaceAtoms[xa] ) && (!strcasecmp( "any", res_surfaceAtoms[xa]) || !strcasecmp( at[ta].resname, res_surfaceAtoms[xa])) )
 					{
-						if( at_leaflet[ta].z < 0 ) 
+						if( at_leaflet[ta].z < leaflet_av_z ) 
 							alt_cur_leaflet = -1;
 						else
 							alt_cur_leaflet = 1;
@@ -213,7 +233,7 @@ int main( int argc, char **argv )
 			if( !strncasecmp( at[a].segid, "GLPA", 4 ) && strncasecmp( at[a].resname, "CER", 3) ) 
 				continue;
 
-			if( !strcasecmp( at[a].atname, puse ) )
+			if( !strcasecmp( at[a].atname, puse ) && (!strcasecmp( "any", res_surfaceAtoms[xa]) || !strcasecmp( at[a].resname, res_surfaceAtoms[xa])))
 			{
 				if( assign_leaflet[a] < 0 ) 
 					leaflet[nuse] = -1;
@@ -242,7 +262,7 @@ int main( int argc, char **argv )
 			if( !strncasecmp( at[a].segid, "GLPA", 4 ) && strncasecmp( at[a].resname, "CER", 3) ) 
 				continue;
 
-			if( !strcasecmp( at[a].atname, tailAtoms[xa] ) )
+			if( !strcasecmp( at[a].atname, tailAtoms[xa] ) && (!strcasecmp( "any", res_tailAtoms[xa]) || !strcasecmp( at[a].resname, res_tailAtoms[xa])) )
 			{
 				tatom_list[nuset] = a;
 				nuset++;
@@ -585,7 +605,7 @@ z
 
 						if( w < 1 )
 						{
-							printf("INCREDIBLE ERROR.\n");
+							printf("The surface was poorly covered at a spot. This has always indicated that particular lipids were left out. Stopping.\n");
 							exit(1);
 						}
 

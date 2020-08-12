@@ -330,8 +330,6 @@ HMMCommands::HMMCommands(FILE *theFile )
 				}
 				allDirectives[ndirectives]->addData( theString, theClass, NULL, 1.0, NULL, use_comment );
 
-				if( c_id == COMMAND_TRAIN || c_id == COMMAND_DECODE || c_id == COMMAND_GRAD )
-					allDirectives[ndirectives]->translate();
 	
 				free(theString);
 				free(theClass);	
@@ -341,6 +339,9 @@ HMMCommands::HMMCommands(FILE *theFile )
 			fp = ftell(theFile);	
 			getLine(theFile, buffer );
 		}
+				
+		if( c_id == COMMAND_TRAIN || c_id == COMMAND_DECODE || c_id == COMMAND_GRAD )
+			allDirectives[ndirectives]->translate();
 	
 		ndirectives++;
 		

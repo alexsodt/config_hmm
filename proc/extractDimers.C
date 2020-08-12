@@ -336,7 +336,7 @@ int main( int argc, char **argv )
 						if( is_seg(1) )
 							printf(" %s", at[atom_list[1][unit_ptr[1][u]]].segid );
 						else
-							printf(" %s %d", at[atom_list[1][unit_ptr[1][u]]].resname, at[atom_list[1][unit_ptr[1][u]]].res );
+							printf(" %s %d", at[atom_list[1][unit_ptr[1][u2]]].resname, at[atom_list[1][unit_ptr[1][u2]]].res );
 							
 						printf(" frame %d\n", f );
 

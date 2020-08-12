@@ -18,7 +18,7 @@ int main( int argc, char **argv )
 		"\tlist_modes [q_cutoff=any]\n"
 		"\tlist_lipids [lipidName]\n"
 		"\tav_curvature [lipid_index=any] [lipid_name=any] [seg_name=any] [q_cutoff=any]\n"
-		"\tmode_curvature lipid_name [definition.inp state_assignment]\n"
+		"\tmode_curvature [lipid_name=any] [atom_name=any] [definition.inp state_assignment] [n_select=any]\n"
 		"\ttrack_mode mode_index [time_between_frames=unset]\n"
 		"\tkc\n"
 		"\ttrack_rho mode_index res_name [time_between_frames=unset]\n";
@@ -202,7 +202,9 @@ int main( int argc, char **argv )
 
 	int do_curv = 0;
 	int do_config = 0;
+	int do_multistate = 0;
 	int mode_curv = 0;
+	int n_select = -1;
 	int for_kc = 0;
 	int track_rho = 0;
 	int track_mode = 0;
@@ -246,10 +248,12 @@ int main( int argc, char **argv )
 
 		return -1;
 	}
-	else if( !strcasecmp( cmd, "mode_curvature") || !strcasecmp( cmd, "config_curvature") ) 
+	else if( !strcasecmp( cmd, "mode_curvature") || !strcasecmp( cmd, "config_curvature") || !strcasecmp( cmd, "multistate_curvature") ) 
 	{
 		if( !strcasecmp( cmd, "config_curvature") ) 
 			do_config = 1;	
+		if( !strcasecmp( cmd, "multistate_curvature") ) 
+			do_multistate = 1;	
 
 		mode_curv = 1;
 		do_curv = 1;	
@@ -260,26 +264,38 @@ int main( int argc, char **argv )
 		{
 			if( strlen(argv[4]) < 200 )
 				strcpy( res_select, argv[4] );
-		}		
-		if( argc > 5 )
+		}
+
+		if( argc > 5 && strcasecmp( argv[5], "any") )
 		{
-			if( argc < 7 )
+			if( strlen(argv[5]) < 200 )
+				strcpy( atomname_select, argv[5] );
+		}
+	
+		if( argc > 6 )
+		{
+			if( argc < 8 )
 			{
 				printf("State-assignment breakdown of curvature requires a definition.inp and state-assignment file.\n");
 				exit(1);
 			}
 
-			pdef_fileName = argv[5];
+			pdef_fileName = argv[6];
 
 
-			pair_assignment = fopen(argv[6], "r");
+			pair_assignment = fopen(argv[7], "r");
 
 			if( !pair_assignment ) 
 			{
-				printf("Couldn't open sphingolipid assignment file '%s'.\n", argv[5]);
+				printf("Couldn't open sphingolipid assignment file '%s'.\n", argv[6]);
 				exit(1);
 			}
 		}	
+
+		if( argc > 8 && strcasecmp( argv[8], "any") )
+		{
+			n_select = atoi(argv[8]);		
+		}
 	}
 	else if( !strcasecmp( cmd, "av_curvature") ) 
 	{	
@@ -389,10 +405,13 @@ int main( int argc, char **argv )
 	
 			for( int l = 0; l < nlipids; l++ )
 			{
-				if( use_atom( USE_ANYWHERE, pass, lipidInfo[l].res, lipidInfo[l].atomName, lipidInfo[l].resName, lipidInfo[l].segid ) )
+				if( !(atomname_select[0]) || !strcasecmp( lipidInfo[l].atomName, atomname_select) )
 				{
-					lipidInfo[l].pdef_index = index_offset;
-					index_offset++;
+					if( use_atom( USE_ANYWHERE, pass, lipidInfo[l].res, lipidInfo[l].atomName, lipidInfo[l].resName, lipidInfo[l].segid ) )
+					{
+						lipidInfo[l].pdef_index = index_offset;
+						index_offset++;
+					}
 				}
 			}
 		}
@@ -404,7 +423,7 @@ int main( int argc, char **argv )
 
 	int nstateSpace = 1;
 	int nstates = 1;
-	int max_time = 10000;
+	int max_time = 20000;
 	int cur_time = 0;
 
 	// plan to to A-Z,a-z+0	
@@ -413,6 +432,7 @@ int main( int argc, char **argv )
 	int max_nstates = 1; // the states we actually get, could be less than 53 (which is the space for configs, A-Z,a-z
 
 	if( do_config) max_nstates = 53;
+	if( do_multistate ) max_nstates = 11; // monomer, 0-9
 
 	double *tot_av_c_m = (double *)malloc( sizeof(double) * nstateSpace * nmodes  );
 	double *tot_av_c_t_m = (double *)malloc( sizeof(double) * nstateSpace * max_time * nmodes  );
@@ -543,8 +563,15 @@ int main( int argc, char **argv )
 			double rho_q_o_0 = 0;	
 			double rho_q_o_1 = 0;	
 	
+	
+
 			if( do_curv || track_rho )
 			{
+				if( cur_time >= max_time )
+				{
+					printf("ERROR: increase max_time (%d).\n", max_time );
+					exit(1);
+				}
 				if( pair_assignment )
 				{
 					getLine( pair_assignment, buffer2 );
@@ -579,7 +606,7 @@ int main( int argc, char **argv )
 				
 				if( pair_assignment )
 				{
-					if( do_config )
+					if( do_config || do_multistate  )
 					{
 						char *tread = buffer2;	
 	
@@ -601,14 +628,28 @@ int main( int argc, char **argv )
 								{	
 									char obs = *tread;
 									int iobs = 0;
-									if( obs >= 'A' && obs <= 'Z' )
-										iobs = 1 + obs - 'A'; // state 0 is the monomer, everything else are dimer configs.
-									else if( obs >= 'a' && obs <= 'z' )
-										iobs = 1 + 26 + obs - 'a';
-									else
+
+									if( do_config )
 									{
-										printf("Similarity center read error.\n");
-										exit(1);
+										if( obs >= 'A' && obs <= 'Z' )
+											iobs = 1 + obs - 'A'; // state 0 is the monomer, everything else are dimer configs.
+										else if( obs >= 'a' && obs <= 'z' )
+											iobs = 1 + 26 + obs - 'a';
+										else
+										{
+											printf("Similarity center read error.\n");
+											exit(1);
+										}
+									}
+									else if( do_multistate )
+									{
+										if( obs >= '0' && obs <= '9' )
+											iobs = 1 + obs - '0'; // state 0 is the monomer, everything else are dimer configs.
+										else
+										{
+											printf("Similarity center read error.\n");
+											exit(1);
+										}
 									}
 									// we keep a record of each state that the lipid is in.
 									// max_simul is the maximum number of simultaneous states a lipid can be involved in.
@@ -658,7 +699,7 @@ int main( int argc, char **argv )
 									break;
 							}
 	
-							if( iobs >= max_nstates ) max_nstates = iobs;
+							if( iobs >= max_nstates ) max_nstates = iobs+1;
 
 							cur_obs[curp*max_simul+nhmm[curp]] = iobs;
 							nhmm[curp] = 1;
@@ -685,6 +726,7 @@ int main( int argc, char **argv )
 						indx = lipidInfo[lip].pdef_index;
 						if( indx < 0 ) continue;
 
+						// put the current state(s) into the state array.
 						n_states_to_write = nhmm[indx];
 						memcpy( states, cur_obs + indx* max_simul, sizeof(int) * nhmm[indx] ); 
 					}
@@ -803,19 +845,21 @@ int main( int argc, char **argv )
 						lipidInfo[lip].avc += cr_c+cr_s;
 			
 
+						if( n_select == -1 || n_select == n_states_to_write )
+						{
+							for( int sx = 0; sx < n_states_to_write; sx++ )
+							{	
+								int cur_state_write = states[sx];
 	
-						for( int sx = 0; sx < n_states_to_write; sx++ )
-						{	
-							int cur_state_write = states[sx];
-
-							tot_av_c_t_m[cur_state_write*max_time*nmodes+mode*max_time+cur_time] += cr_c + cr_s;
-							tot_av_c_m[cur_state_write*nmodes+mode] += cr_c + cr_s;
-
-							ntot_m[cur_state_write*nmodes+mode] += 1;
-							ntot_t_m[cur_state_write*nmodes*max_time+mode*max_time+cur_time] += 1;
-
-							tot_av_c_t[cur_state_write*max_time+cur_time] += cr_c + cr_s;
-							tot_av_c[cur_state_write] += cr_c + cr_s;
+								tot_av_c_t_m[cur_state_write*max_time*nmodes+mode*max_time+cur_time] += cr_c + cr_s;
+								tot_av_c_m[cur_state_write*nmodes+mode] += cr_c + cr_s;
+	
+								ntot_m[cur_state_write*nmodes+mode] += 1;
+								ntot_t_m[cur_state_write*nmodes*max_time+mode*max_time+cur_time] += 1;
+	
+								tot_av_c_t[cur_state_write*max_time+cur_time] += cr_c + cr_s;
+								tot_av_c[cur_state_write] += cr_c + cr_s;
+							}
 						}
 
 						avc += cr_c + cr_s;
@@ -850,6 +894,7 @@ int main( int argc, char **argv )
 
 //				printf("blip %lf %lf.\n", hq[2*mode_select+0], hq[2*mode_select+1] );
 				cur_time++;
+
 			}
 		
 			if( track_mode )
@@ -884,13 +929,20 @@ int main( int argc, char **argv )
 
 		if( mode_curv )
 		{
+			int state_lim = 0;
+			
+			for( int s = 0; s < nstates; s++ )
+			{
+				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
+					state_lim = s+1;
+			}
 
 			if( do_config )
-				printf("nmodes %d nconfigs %d num_per_state", nmodes, nstates );
+				printf("nmodes %d nconfigs %d num_per_state", nmodes, state_lim );
 			else
-				printf("nmodes %d nstates %d num_per_state", nmodes, nstates );
+				printf("nmodes %d nstates %d num_per_state", nmodes, state_lim );
 
-			for( int s = 0; s < nstates; s++ )
+			for( int s = 0; s < state_lim; s++ )
 				printf(" %lf", ntot[s] );
 			printf("\n");
 
@@ -899,72 +951,92 @@ int main( int argc, char **argv )
 				printf(" %le", sqrt(modes[2*m+0]*modes[2*m+0]+modes[2*m+1]*modes[2*m+1]) );
 			printf("\n");
 
-			for( int s = 0; s < nstates; s++ )
+			for( int s = 0; s < state_lim; s++ )
 			{
-				if( do_config )
+				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
 				{
-					char code = '0'; // 0, A-Z, a-z are the code sequences.
-					if( s > 0 && s <= 26 )
-						code = 'A' + s - 1;
-					else if( s > 26 && s <= 52 )
-						code = 'a' + s - 27;
-					printf("state %c curv", code );
-				}
-				else
-					printf("state %d curv", s );
-				
-				for( int m = 0; m < nmodes; m++ )
-					printf(" %le", tot_av_c_m[s*nmodes+m] / ntot_m[s*nmodes+m] );
-
-				printf("\n");
-			}
-			for( int s = 0; s < nstates; s++ )
-			{
-				if( do_config )
-				{
-					char code = '0'; // 0, A-Z, a-z are the code sequences.
-					if( s > 0 && s <= 26 )
-						code = 'A' + s - 1;
-					else if( s > 26 && s <= 52 )
-						code = 'a' + s - 27;
-					printf("state %c ebar", code );
-				}
-				else
-					printf("state %d ebar", s );
-				for( int m = 0; m < nmodes; m++ )
-				{
-					int nebar = 7;
-					
-					double lavc = 0;
-					double lavc2 = 0;
-					double navc = 0;
-	
-					for( int t = 0; t < nebar; t++ )
+					if( do_config )
 					{
-						double t_avc = 0;
-						double t_navc = 0;
-	
-						for( int it = (t*cur_time/7); it < ((t+1)*cur_time/7) && it < cur_time; it++ )
-						{
-							t_avc += tot_av_c_t_m[s*max_time*nmodes+m*max_time+it];
-							t_navc += ntot_t_m[s*max_time*nmodes+m*max_time+it]; 
-						}
-		
-						if( t_navc > 50 )
-						{
-							t_avc /= t_navc;
-	
-							lavc += t_avc;
-							lavc2 += t_avc*t_avc;
-							navc += 1;
-						}
+						char code = '0'; // 0, A-Z, a-z are the code sequences.
+						if( s > 0 && s <= 26 )
+							code = 'A' + s - 1;
+						else if( s > 26 && s <= 52 )
+							code = 'a' + s - 27;
+						printf("state %c curv", code );
 					}
-				
-					double ebar = sqrt((lavc2 / navc) - (lavc/navc)*(lavc/navc));
-					ebar /= sqrt(navc);
-					printf(" %le", ebar );
-				}	
-				printf("\n");
+					else if( do_multistate )
+					{
+						char code = 'X'; // 0, A-Z, a-z are the code sequences.
+						if( s > 0 && s <= 9 )
+							code = '0' + s - 1;
+						printf("state %c curv", code );
+					}
+					else
+						printf("state %d curv", s );
+					
+					for( int m = 0; m < nmodes; m++ )
+						printf(" %le", tot_av_c_m[s*nmodes+m] / ntot_m[s*nmodes+m] );
+	
+					printf("\n");
+				}
+			}
+			for( int s = 0; s < state_lim; s++ )
+			{
+				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
+				{
+					if( do_config )
+					{
+						char code = '0'; // 0, A-Z, a-z are the code sequences.
+						if( s > 0 && s <= 26 )
+							code = 'A' + s - 1;
+						else if( s > 26 && s <= 52 )
+							code = 'a' + s - 27;
+						printf("state %c ebar", code );
+					}
+					else if( do_multistate)
+					{
+						char code = 'X'; // 0, A-Z, a-z are the code sequences.
+						if( s > 0 && s <= 9 )
+							code = '0' + s - 1;
+						printf("state %c ebar", code );
+					}
+					else
+						printf("state %d ebar", s );
+					for( int m = 0; m < nmodes; m++ )
+					{
+						int nebar = 7;
+						
+						double lavc = 0;
+						double lavc2 = 0;
+						double navc = 0;
+		
+						for( int t = 0; t < nebar; t++ )
+						{
+							double t_avc = 0;
+							double t_navc = 0;
+		
+							for( int it = (t*cur_time/7); it < ((t+1)*cur_time/7) && it < cur_time; it++ )
+							{
+								t_avc += tot_av_c_t_m[s*max_time*nmodes+m*max_time+it];
+								t_navc += ntot_t_m[s*max_time*nmodes+m*max_time+it]; 
+							}
+			
+							if( t_navc > 50 )
+							{
+								t_avc /= t_navc;
+		
+								lavc += t_avc;
+								lavc2 += t_avc*t_avc;
+								navc += 1;
+							}
+						}
+					
+						double ebar = sqrt((lavc2 / navc) - (lavc/navc)*(lavc/navc));
+						ebar /= sqrt(navc);
+						printf(" %le", ebar );
+					}	
+					printf("\n");
+				}
 			}
 		}
 		else if( do_curv  )	

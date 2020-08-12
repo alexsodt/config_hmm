@@ -58,13 +58,48 @@ int main( int argc, char **argv )
 			char fileName[256];
 			int frame;
 
-#ifdef MATCH_RESID
-			int nr = sscanf( buffer, "REMARK %s %s %d %s %d frame %d",
-				fileName, resName1, &res1, resName2, &res2, &frame );
-#else
-			int nr = sscanf( buffer, "REMARK %s %s %s frame %d",
-				fileName, segid1, segid2, &frame );
-#endif
+			const char *t = buffer;
+
+			sscanf( buffer, "REMARK %s", fileName );
+	
+			int err = 0;
+			int arg_advance = 0;
+
+			// advance past REMARK and filename.
+			t = advance_string(t, 2 );
+
+			if( is_seg(0) )
+			{
+				int nr = sscanf(t, "%s ", segid1 );
+				if( nr != 1 ) err = 1;
+				arg_advance = 1;
+			}
+			else
+			{
+				int nr = sscanf(t, "%s %d ", resName1, &res1 );
+				if( nr != 2 ) err = 1;
+				arg_advance = 2;
+			}
+	
+			t = advance_string( t, arg_advance );
+			
+			if( is_seg(1) )
+			{
+				int nr = sscanf(t, "%s ", segid2 );
+				if( nr != 1 ) err = 1;
+				arg_advance = 1;
+			}
+			else
+			{
+				int nr = sscanf(t, "%s %d ", resName2, &res2 );
+				if( nr != 2 ) err = 1;
+				arg_advance = 2;
+			}
+		
+			t = advance_string( t, arg_advance );	
+
+			int nr = sscanf(t, "frame %d", &frame );
+
 			FILE *dcdFile = fopen(fileName,"r" );
 			if( !dcdFile )
 			{
@@ -93,31 +128,35 @@ int main( int argc, char **argv )
 
 					for( int a = 0; a < curNAtoms(); a++ )
 					{
-#ifdef MATCH_RESID
-						if( (!strcasecmp( at[a].resname, resName1 )&&at[a].res==res1) || (!strcasecmp( at[a].resname, resName2)&&at[a].res==res2))
-#else
-						if( !strcasecmp( at[a].segid, segid1 ) || !strcasecmp( at[a].segid, segid2) )
-#endif
+						int match = 0;
+						if( is_seg(0) && !strcasecmp( at[a].segid, segid1) )
+							match = 1;
+						if( is_seg(1) && !strcasecmp( at[a].segid, segid2) )
+							match = 1;
+						if( !is_seg(0) && !strcasecmp(at[a].resname, resName1) && at[a].res == res1 )
+							match = 1;
+						if( !is_seg(1) && !strcasecmp(at[a].resname, resName2) && at[a].res == res2 )
+							match = 1;
+						if( !match ) continue;
+
+						if( !init )
 						{
-							if( !init )
-							{
-								while( at[a].x - last[0] < -La/2 ) at[a].x += La;
-								while( at[a].x - last[0] > La/2 ) at[a].x -= La;
-								while( at[a].y - last[1] < -Lb/2 ) at[a].y += Lb;
-								while( at[a].y - last[1] > Lb/2 ) at[a].y -= Lb;
-								while( at[a].z - last[2] < -Lc/2 ) at[a].z += Lc;
-								while( at[a].z - last[2] > Lc/2 ) at[a].z -= Lc;
-							}
-							else
-							{
-								last[0] = at[a].x;
-								last[1] = at[a].y;
-								last[2] = at[a].z;
-								init = 0;
-							}
-				
-							printATOM( stdout, at[a].bead, at[a].res, at+a );
+							while( at[a].x - last[0] < -La/2 ) at[a].x += La;
+							while( at[a].x - last[0] > La/2 ) at[a].x -= La;
+							while( at[a].y - last[1] < -Lb/2 ) at[a].y += Lb;
+							while( at[a].y - last[1] > Lb/2 ) at[a].y -= Lb;
+							while( at[a].z - last[2] < -Lc/2 ) at[a].z += Lc;
+							while( at[a].z - last[2] > Lc/2 ) at[a].z -= Lc;
 						}
+						else
+						{
+							last[0] = at[a].x;
+							last[1] = at[a].y;
+							last[2] = at[a].z;
+							init = 0;
+						}
+				
+						printATOM( stdout, at[a].bead, at[a].res, at+a );
 					}
 					printf("END\n");
 					do_break = 1;

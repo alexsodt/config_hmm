@@ -82,6 +82,13 @@ void load_pair_definition( const char *pairDefinitionFileName )
 	pdef.hbond0_penalty = 0;
 
 	FILE *theFile = fopen(pairDefinitionFileName, "r");
+
+	if( !theFile )
+	{
+		printf("Couldn't open pair definition file '%s'.\n", pairDefinitionFileName );
+		exit(1);
+	}
+
 	char *buffer = (char *)malloc( sizeof(char) * 100000 );
 
 	for( int pass = 0; pass < 2; pass++ )

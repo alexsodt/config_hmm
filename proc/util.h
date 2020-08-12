@@ -9,4 +9,4 @@ int readNDoubles( char *buffer, double *vals, int nvalues );
 void getLine( FILE *theFile, char *theBuffer );
 void print5( int val, char *str );
 const char *advance_string( const char *t, int nadv );
-int decodeString( char *buf, char **out, int nmax );
+int decodeString( char *buf, char **out, char **res_out, int nmax );

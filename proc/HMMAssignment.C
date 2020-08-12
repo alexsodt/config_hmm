@@ -42,7 +42,7 @@ int main( int argc, char **argv )
 {
 	if( argc < 4 )
 	{
-		printf("Syntax: HMMAssignment psf hmm.decoded stride definition.inp  [mode=config] dcd1 [dcd2 ...]\n");
+		printf("Syntax: HMMAssignment psf hmm.decoded stride definition.inp  [mode=config] [mode=multistate] dcd1 [dcd2 ...]\n");
 		return 0;
 	}
 
@@ -300,6 +300,18 @@ int main( int argc, char **argv )
 		mode = 1;		
 		arg_offset += 1;
 	}
+	
+	if( !strncasecmp( argv[5], "mode=multistate", strlen("mode=multistate") ) )
+	{	
+		// config mode: a special format is used:
+		// first a number indicating the number of simultaneous complexes
+		// then, the number codes. confusing to look at because it must be interpreted sequentially
+		// 0011201321012...
+		// is 0 0 1:1 2:01 3:210 1:2	
+
+		mode = 2;		
+		arg_offset += 1;
+	}
 
 	int tot_frame = 0;
 
@@ -405,6 +417,7 @@ int main( int argc, char **argv )
 			int max_simul = 10;
 			char *cur_state = (char *)malloc( sizeof(char) * (nunits_tot+1) );
 			char *hmm_state = (char *)malloc( sizeof(char) * (nunits_tot+1) * max_simul );
+			char *multi_state = (char *)malloc( sizeof(char) * (nunits_tot+1) * max_simul );
 			int *nhmm = (int *)malloc( sizeof(int) * nunits_tot );
 			for( int u = 0; u < nunits_tot; u++ )
 				nhmm[u] = 0;
@@ -420,14 +433,17 @@ int main( int argc, char **argv )
 				if( !apair->active && !strcasecmp( argv[c], apair->start_file) )
 				{
 					if( f >= apair->start_frame )
+					{
 						apair->active = 1;
+					}
 				}				
 				
 				if( !apair->inactive && !strcasecmp( argv[c], apair->end_file) )
 				{
 					if( f >= apair->end_frame )
-						apair->active = 1;
-				}				
+						apair->active = 0;
+				}
+
 			}
 
 			for( struct tracked_pair *apair = pairs; apair; apair = apair->next )
@@ -464,9 +480,12 @@ int main( int argc, char **argv )
 					{
 						if( nhmm[uoff] < max_simul )
 						{
-							hmm_state[uoff*max_simul+nhmm[uoff]] = apair->obs_seq[apair->cntr];
+							hmm_state[uoff*max_simul+nhmm[uoff]]  = apair->obs_seq[apair->cntr];
+							multi_state[uoff*max_simul+nhmm[uoff]] = apair->state_seq[apair->cntr];
 							nhmm[uoff]++;	
+							
 						}
+
 						switch( apair->state_seq[apair->cntr] )
 						{	
 							case '0':
@@ -496,13 +515,23 @@ int main( int argc, char **argv )
 			if( tot_frame % stride == 0 )
 				printf("%s\n",cur_state );
 			}
-			else
+			else if( mode == 1 ) 
 			{
 				for( int u = 0; u < nunits_tot; u++ )
 				{
 					printf("%d", nhmm[u] );
 					for( int t = 0; t < nhmm[u]; t++ )
 						printf("%c", hmm_state[u*max_simul+t]); 
+				}
+				printf("\n");
+			}
+			else if( mode == 2 ) 
+			{
+				for( int u = 0; u < nunits_tot; u++ )
+				{
+					printf("%d", nhmm[u] );
+					for( int t = 0; t < nhmm[u]; t++ )
+						printf("%c", multi_state[u*max_simul+t]); 
 				}
 				printf("\n");
 			}
