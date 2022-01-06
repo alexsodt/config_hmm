@@ -8,7 +8,7 @@ int main( int argc, char ** argv )
 {
 	if( argc < 4 )
 	{
-		printf("Syntax: bestFitC <outputFromFourierExtract_mode_curvature> qlow qhigh [state_select]\n");
+		printf("Syntax: bestFitC <outputFromFourierExtract_mode_curvature> qlow qhigh [state_select] [divide]\n");
 		return 0;
 	}
 	FILE *theFile = fopen(argv[1],"r");
@@ -19,9 +19,12 @@ int main( int argc, char ** argv )
 		return 0;
 	}
 
-	char *buffer = (char *)malloc( sizeof(char) * 100000 );
+	char *buffer = (char *)malloc( sizeof(char) * 1000000 );
 	
 	getLine( theFile, buffer );
+
+	while( !feof(theFile) && buffer[0] == '#' )
+		getLine(theFile,buffer);
 
 	int state_select = -1;
 	int nmodes;
@@ -33,10 +36,20 @@ int main( int argc, char ** argv )
 	if( argc > 4 )
 	{
 		state_select = atoi(argv[4]);
-		if( argv[4][0] >= 'A' && argv[4][0] <= 'Z' )
-			state_select = argv[4][0] - 'A';
-		if( argv[4][0] >= 'a' && argv[4][0] <= 'z' )
-			state_select = 26  + argv[4][0] - 'a';
+		if( state_select >= 0 )
+		{
+			if( argv[4][0] >= 'A' && argv[4][0] <= 'Z' )
+				state_select = argv[4][0] - 'A';
+			if( argv[4][0] >= 'a' && argv[4][0] <= 'z' )
+				state_select = 26  + argv[4][0] - 'a';
+		}
+	}
+
+	int divide = 0;
+	if( argc > 5 )
+	{
+		if( !strcasecmp( argv[5], "divide" ) )
+			divide = 1;
 	}
 
 	int nr = sscanf( buffer, "nmodes %d nstates %d", &nmodes, &nstates );
@@ -172,10 +185,20 @@ int main( int argc, char ** argv )
 	}
 	else
 	{
-		for( int s = 0; s < nstates; s++ )
-			printf(" %le", c[s] );
-		for( int s = 0; s < nstates; s++ )
-			printf(" %d", mode_count[s] );
+		if( divide )
+		{
+			for( int s = 0; s < nstates; s++ )
+				printf(" %le", c[s]/mode_count[s] );
+			for( int s = 0; s < nstates; s++ )
+				printf(" X" );
+		}
+		else
+		{
+			for( int s = 0; s < nstates; s++ )
+				printf(" %le", c[s] );
+			for( int s = 0; s < nstates; s++ )
+				printf(" %d", mode_count[s] );
+		}
 		printf(" err");
 		for( int s = 0; s < nstates; s++ )
 		{

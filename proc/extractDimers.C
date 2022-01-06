@@ -9,7 +9,7 @@
 	
 
 
-const double cutoff = 14.0;
+static double cutoff = 14.0;
 double info_hbond_cutoff = 2.5;
 
 struct foundABond
@@ -69,10 +69,32 @@ int main( int argc, char **argv )
 	int *unit_size[2];
 		unit_size[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
 		unit_size[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
+
+	int *unit_nextra[2]; // the number of extra atoms that need to be recorded for each.
+		unit_nextra[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
+		unit_nextra[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
+
+	int *unit_extra_ptr[2]; // the index into min_r_list where we store the index	
+	int cur_min_r_ptr[2] = {0,0};
+	int *extra_indices[2];
+
+	// where we store the indices of the nearest ions.
+	extra_indices[0] = (int *)malloc( sizeof(int) * curNAtoms() );
+	extra_indices[1] = (int *)malloc( sizeof(int) * curNAtoms() );
+
+	unit_extra_ptr[0] = (int *)malloc( sizeof(int) * curNAtoms() );
+	unit_extra_ptr[1] = (int *)malloc( sizeof(int) * curNAtoms() );
+
+	// qualifies as an extra atom for some unit:
+	int *qual_extra = (int *)malloc( sizeof(int) * curNAtoms() );
+	memset( qual_extra, 0, sizeof(int) * curNAtoms() );
+	int nqual = 0; // this way we can loop over this set of atoms only, looking for nearby atoms.
+
 	int nunits[2] = {0,0};
 	int natoms[2] = {0,0};
 
 	double *unit_r[2] = { NULL, NULL };
+	
 
 	int stride = atoi(argv[2]);
 
@@ -87,6 +109,8 @@ int main( int argc, char **argv )
 	hbond0_penalty = 0;
 
 	load_pair_definition( argv[3] );
+
+	cutoff = getCutoff();
 
 	for( int c = 4; c < argc; c++ )
 	{
@@ -126,6 +150,12 @@ int main( int argc, char **argv )
 				int cur_hex = 0;
 
 				char psegid[256];
+
+				for( int a = 0; a < curNAtoms(); a++ )
+				{
+					if( used_as_ion( at[a].res, at[a].resname, at[a].segid, NULL ) >= 0 ) 
+						qual_extra[nqual++] = a;	
+				}
 
 				for( int pass = 0; pass < 2; pass++ )
 				{
@@ -167,8 +197,10 @@ int main( int argc, char **argv )
 							num_atom[pass][cur_unit] = 1;
 							unit_ptr[pass][cur_unit] = natoms[pass];
 							unit_size[pass][cur_unit] = 0;
-							nunits[pass]++;
-					
+//							unit_nextra[pass][cur_unit] = nextra(pass);
+//							unit_extra_ptr[pass][cur_unit] = cur_min_r_ptr[pass];
+//							cur_min_r_ptr[pass] += unit_nextra[pass][cur_unit]; 
+							nunits[pass]++;	
 						}
 						else if( op )
 						{
@@ -192,6 +224,12 @@ int main( int argc, char **argv )
 
 				init_done = 1;
 			} 
+
+			for( int pass = 0; pass < 2; pass++ )
+			{
+				for( int qx = 0; qx < cur_min_r_ptr[pass]; qx++ )
+					extra_indices[pass][qx] = -1; 
+			}
 	
 			for( int pass = 0; pass < 2; pass++ )
 			for( int u = 0; u < nunits[pass]; u++ )
@@ -211,14 +249,103 @@ int main( int argc, char **argv )
 				unit_r[pass][3*u+0] /= unit_size[pass][u];
 				unit_r[pass][3*u+1] /= unit_size[pass][u];
 				unit_r[pass][3*u+2] /= unit_size[pass][u];
+
+/*				int num = unit_nextra[pass][u];
+				if( num > 0 )
+				{
+					double min_r[num];
+					for( int r = 0; r < num; r++ )
+						min_r[r] = -1;
+
+					// loop over the possibly qualifying extras.
+					for( int qx = 0; qx < nqual; qx++ )
+					{
+						int q = qual_extra[qx];
+			
+						double qmr = -1; // min_r for this q.					
+	
+						for( int ax = 0; ax < unit_size[pass][u]; ax++ )
+						{
+							int a = atom_list[pass][unit_ptr[pass][u]+ax];
+							double dr[3] = { at[a].x - at[q].x, at[a].y - at[q].y, at[a].z - at[q].z };
+	
+							double shift[3] = { 0,0,0};
+	
+							while( dr[0]+shift[0] < -La/2 ) shift[0] += La;
+							while( dr[0]+shift[0] > La/2 ) shift[0] -= La;
+							while( dr[1]+shift[1] < -Lb/2 ) shift[1] += Lb;
+							while( dr[1]+shift[1] > Lb/2 ) shift[1] -= Lb;
+							while( dr[2]+shift[2] < -Lc/2 ) shift[2] += Lc;
+							while( dr[2]+shift[2] > Lc/2 ) shift[2] -= Lc;
+							
+							dr[0] += shift[0];
+							dr[1] += shift[1];
+							dr[2] += shift[2];
+		
+							double r = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
+		
+							if( qmr < 0 || r < qmr )
+								qmr = r;	
+						}
+						int worth_checking = 0;
+						for( int r = 0; r < num; r++ )
+						{
+							if( min_r[r] < 0 || qmr < min_r[r] )
+								worth_checking = 1;
+						}
+
+						if( worth_checking ) 
+						{
+							double max_r;
+							int ex = used_as_ion( pass, at[q].res, at[q].resname, at[q].segid, &max_r );
+
+							if( ex >= 0 && qmr < max_r )
+							{
+								if( min_r[ex] < 0 || qmr < min_r[ex] )
+								{
+									min_r[ex] = qmr;
+									
+									// store the index of the atom.
+									extra_indices[pass][unit_extra_ptr[pass][u]+ex] = q;	
+								}
+							}
+						}
+					}
+				}*/
 			}
+	
+
+			// We are looking here for unit pairs that are compatible with the selection.
+			// we don't need to print out anything twice. 
 
 			for( int u = 0; u < nunits[0]; u++ )
 			{
-				for( int u2 = u+1; u2 < nunits[1]; u2++ )
+/*				int is_complete = 1;
+
+				for( int x = 0; x < unit_nextra[0][u]; x++ )
+				{
+					if( extra_indices[0][unit_extra_ptr[0][u]+x] < 0 )
+						is_complete = 0;
+				}
+
+				if( !is_complete ) continue;
+*/
+				for( int u2 = 0; u2 < nunits[1]; u2++ )
 				{
 					if( is_sym() && u2 <= u ) continue;
+			
+/*					is_complete = 1;
 
+					for( int x = 0; x < unit_nextra[1][u]; x++ )
+					{
+						if( extra_indices[1][unit_extra_ptr[1][u]+x] < 0 )
+							is_complete = 0;
+					}
+
+					if( !is_complete ) continue;
+*/
+					if( first_atom[0][u] == first_atom[1][u2] ) continue;								
+				
 					double dr[3] = { 
 						unit_r[1][3*u2+0] - unit_r[0][3*u+0],
 						unit_r[1][3*u2+1] - unit_r[0][3*u+1],
@@ -238,7 +365,62 @@ int main( int argc, char **argv )
 
 					double r = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
 
-					if( r < cutoff )
+					int ions_covered = 1;
+					int num = nextra();
+					int extra_to_print[1+num];
+					double cenp[3] = { unit_r[0][3*u+0] + dr[0]/2, 
+							   unit_r[0][3*u+1] + dr[1]/2,		
+							   unit_r[0][3*u+2] + dr[2]/2 };		
+	
+
+					if( r < cutoff && num > 0 )
+					{
+						for( int i = 0; i < num; i++ )
+							extra_to_print[i] = -1;
+
+
+						for( int qx = 0; qx < nqual; qx++ )
+						{
+							int q = qual_extra[qx];
+
+							double max_r;
+							double qmr = -1;
+							int ex = used_as_ion( at[q].res, at[q].resname, at[q].segid, &max_r );
+
+							double dr[3] = { cenp[0] - at[q].x, cenp[1] - at[q].y, cenp[2] - at[q].z };
+	
+							double shift[3] = { 0,0,0};
+	
+							while( dr[0]+shift[0] < -La/2 ) shift[0] += La;
+							while( dr[0]+shift[0] > La/2 ) shift[0] -= La;
+							while( dr[1]+shift[1] < -Lb/2 ) shift[1] += Lb;
+							while( dr[1]+shift[1] > Lb/2 ) shift[1] -= Lb;
+							while( dr[2]+shift[2] < -Lc/2 ) shift[2] += Lc;
+							while( dr[2]+shift[2] > Lc/2 ) shift[2] -= Lc;
+							
+							dr[0] += shift[0];
+							dr[1] += shift[1];
+							dr[2] += shift[2];
+		
+							double r = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
+		
+							if( qmr < 0 || r < qmr )
+							{
+								qmr = r;
+ 								if( qmr < max_r )
+									extra_to_print[ex] = q;
+							}
+						}
+
+						for( int t = 0; t < num; t++ )
+						{
+							if( extra_to_print[t] < 0 )
+								ions_covered = 0;
+						}
+
+					}
+
+					if( r < cutoff && (ions_covered  || allowNoIons()) )
 					{
 						long binary_hbond = 0;
 
@@ -267,6 +449,10 @@ int main( int argc, char **argv )
 									binary_hbond += (1<<bond_index); 
 							}
 						}
+
+						if( force_hbonds() && binary_hbond == 0 )
+							continue;	
+
 
 						if( info_mode() )
 						{
@@ -338,8 +524,18 @@ int main( int argc, char **argv )
 						else
 							printf(" %s %d", at[atom_list[1][unit_ptr[1][u2]]].resname, at[atom_list[1][unit_ptr[1][u2]]].res );
 							
-						printf(" frame %d\n", f );
+						printf(" frame %d", f );
 
+						printf(" nextra %d", num );
+						for( int ex = 0; ex < num; ex++ )
+						{
+							int q = extra_to_print[ex];
+							if( q >= 0 )
+								printf(" %s_%s_%d", at[q].segid, at[q].resname, at[q].res );
+							else
+								printf(" NULL_NULL_0" );
+						}
+						printf("\n");
 						printf("REMARK CODE %lu\n", binary_hbond );
 						for( int ax = 0; ax < unit_size[0][u]; ax++ )
 							printATOM( stdout,
@@ -347,8 +543,61 @@ int main( int argc, char **argv )
 							        at[atom_list[0][unit_ptr[0][u]+ax]].res, 
 								at+atom_list[0][unit_ptr[0][u]+ax] );
 	
-			
+						for( int ex = 0; ex < num; ex++ ) 
+						{
+							int q = extra_to_print[ex];
 
+							if( q >= 0 )
+							{
+							double dr[3] = { 
+								at[q].x - cenp[0],	
+								at[q].y - cenp[1] ,	
+								at[q].z - cenp[2] };	
+								
+							while( dr[0] < -La/2 )dr[0] += La;
+							while( dr[0] > La/2 ) dr[0]-= La;
+							while( dr[1] < -Lb/2 )dr[1] += Lb;
+							while( dr[1] > Lb/2 ) dr[1]-= Lb;
+							while( dr[2] < -Lc/2 )dr[2] += Lc;
+							while( dr[2] > Lc/2 ) dr[2]-= Lc;
+
+							double t[3] = { at[q].x, at[q].y, at[q].z };
+
+							at[q].x = cenp[0] + dr[0];
+							at[q].y = cenp[1] + dr[1];
+							at[q].z = cenp[2] + dr[2];
+							
+							printATOM( stdout,
+							        at[q].bead, 
+							        at[q].res, 
+								at+q );
+
+							at[q].x = t[0];
+							at[q].y = t[1];
+							at[q].z = t[2];
+							}
+							else
+							{
+								struct atom_rec dummy;
+								char nullS[256];
+								dummy.atname = nullS;
+								dummy.segid = nullS;
+								dummy.resname = nullS;
+								dummy.altloc = ' ';
+								dummy.chain = ' ';
+								dummy.bead = 0;
+								dummy.res = 0;
+								dummy.x = 9999.999;
+								dummy.y = 9999.999;
+								dummy.z = 9999.999;
+
+								printATOM( stdout,
+								        dummy.bead, 
+								        dummy.res, 
+									&dummy );
+							}
+						} 
+	
 						for( int ax = 0; ax < unit_size[1][u2]; ax++ )
 						{
 							int a = atom_list[1][unit_ptr[1][u2]+ax];
@@ -364,6 +613,7 @@ int main( int argc, char **argv )
 							at[a].y -= shift[1];
 							at[a].z -= shift[2];
 						}
+
 						printf("END\n");
 					} 
 				}

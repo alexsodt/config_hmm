@@ -10,7 +10,7 @@ int micelle_nthresh = 6;
 int thresh_ncontacts_interior = 30;
 int thresh_ncontacts_connection = 3;
 
-const double cutoff = 14.0;
+static double cutoff = 14.0;
 
 double getChi2Symm( double *, double *, int ); 
 
@@ -42,13 +42,14 @@ int main( int argc, char **argv )
 {
 	if( argc < 4 )
 	{
-		printf("Syntax: HMMAssignment psf hmm.decoded stride definition.inp  [mode=config] [mode=multistate] dcd1 [dcd2 ...]\n");
+		printf("Syntax: HMMAssignment psf hmm.decoded stride definition.inp  [mode=config] [mode=multistate] [mode=only_donor] dcd1 [dcd2 ...]\n");
+		printf("(Only donor only outputs a state if you are a hydrogen bond donor).\n");
 		return 0;
 	}
 
-	char *buffer = (char *)malloc( sizeof(char)* 100000 );
+	char *buffer = (char *)malloc( sizeof(char)* 1000000 );
 	FILE *psfFile = fopen(argv[1], "r" );
-
+	int only_donor = 0;
 	if( ! psfFile )
 	{
 		printf("Couldn't open PSF file '%s'.\n", argv[1] );
@@ -71,7 +72,7 @@ int main( int argc, char **argv )
 
 	FILE *hmm = fopen(argv[2],"r");
 		
-	int max_len = 100000;
+	int max_len = 1000000;
 	char *hmm_seq_read = (char *)malloc( sizeof(char) * max_len );
 	char *class_seq_read = (char *)malloc( sizeof(char) * max_len );
 
@@ -213,6 +214,16 @@ int main( int argc, char **argv )
 		
 		t = advance_string( t, arg_advance );	
 
+		if( !strncasecmp( t, "nextra", 6 ) )
+		{
+			int nex;
+			int nr = sscanf( t, "nextra %d", &nex );
+			t = advance_string( t, 2 );	
+	
+			for( int e = 0; e < nex; e++ )
+				t = advance_string( t, 3 );	
+		}
+
 		int nr = sscanf(t, "starting in dcd %s frame %d, ending in dcd %s frame %d.",
 			dcdNameS, &frameS, dcdNameE, &frameE );			
 
@@ -278,9 +289,10 @@ int main( int argc, char **argv )
 		unit_size[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
 	int nunits[2] = {0,0};
 	int natoms[2] = {0,0};
+	int *unit_map = (int *)malloc( sizeof(int) * curNAtoms() ); 
 
-
-
+	for( int u = 0; u < curNAtoms(); u++ )
+		unit_map[u] = -1;
 
 	int stride = atoi(argv[3]);
 	
@@ -289,8 +301,9 @@ int main( int argc, char **argv )
 
 	load_pair_definition( argv[4] );
 	
+	cutoff = getCutoff();
 
-	if( !strncasecmp( argv[5], "mode=config", 11 ) )
+	if( argc > 5 && !strncasecmp( argv[5], "mode=config", 11 ) )
 	{	
 		// config mode: a special format is used:
 		// first a number indicating the number of simultaneous complexes
@@ -301,7 +314,7 @@ int main( int argc, char **argv )
 		arg_offset += 1;
 	}
 	
-	if( !strncasecmp( argv[5], "mode=multistate", strlen("mode=multistate") ) )
+	if( argc> 5 && !strncasecmp( argv[5], "mode=multistate", strlen("mode=multistate") ) )
 	{	
 		// config mode: a special format is used:
 		// first a number indicating the number of simultaneous complexes
@@ -312,8 +325,21 @@ int main( int argc, char **argv )
 		mode = 2;		
 		arg_offset += 1;
 	}
+	
+	if( argc> 5 && !strncasecmp( argv[5], "mode=only_donor", strlen("mode=only_donor") ) )
+	{	
+		only_donor = 1;
+		arg_offset += 1;
+	}
 
 	int tot_frame = 0;
+
+	// for asymmetric pairs we don't want to label a pair twice, for example, in A <-> A|B|C. This marks the pair as being used.
+	int *marked = (int *)malloc( sizeof(int) * nat );
+	for( int u = 0; u < nat; u++ )
+		marked[u] = -1;
+
+	int real_units_2 = 0;
 
 	for( int c = 5+arg_offset; c < argc; c++ )
 	{
@@ -381,7 +407,16 @@ int main( int argc, char **argv )
 						{
 							cur_unit++;
 							op=1;
-							
+							//printf("Adding unit %s.\n", at[a].resname );	
+
+							if( marked[a] >= 0 ) // which element of unit[0] this is.
+								unit_map[cur_unit] = marked[a];
+							else
+							{
+								if( pass == 1 )
+									real_units_2 += 1; 
+								marked[a] = cur_unit;
+							}
 							first_atom[pass][cur_unit] = a;
 							num_atom[pass][cur_unit] = 1;
 							unit_ptr[pass][cur_unit] = natoms[pass];
@@ -410,11 +445,11 @@ int main( int argc, char **argv )
 				init_done = 1;
 			} 
 
-			int nunits_tot = nunits[0] + nunits[1]; 
+			int nunits_tot = nunits[0] + real_units_2; 
 		
 			if( is_sym() ) nunits_tot = nunits[0];
 
-			int max_simul = 10;
+			int max_simul = 9;
 			char *cur_state = (char *)malloc( sizeof(char) * (nunits_tot+1) );
 			char *hmm_state = (char *)malloc( sizeof(char) * (nunits_tot+1) * max_simul );
 			char *multi_state = (char *)malloc( sizeof(char) * (nunits_tot+1) * max_simul );
@@ -451,13 +486,37 @@ int main( int argc, char **argv )
 				if( !apair->active || apair->inactive ) continue;
 
 				int npasses = 2;
-				if( is_sym() ) npasses = 1;
+		//		if( is_sym() ) npasses = 1;
+
+				int u_cntr = 0;
 
 				for( int pass = 0; pass < npasses; pass++ )
+				{
+					if( is_sym() )
+						u_cntr = 0;
+
 				for( int u = 0; u < nunits[pass]; u++ )
 				{
-					int uoff = u;
-					if( pass == 1 ) uoff += nunits[0];
+					int uoff = u_cntr;
+//					if( pass == 1 ) uoff += nunits[0];
+
+
+					if( is_sym() )
+					{
+						u_cntr++;
+					}
+					else
+					{
+						if( pass == 1 )
+						{
+							if( unit_map[u] >= 0 )
+								uoff = unit_map[u];
+							else
+								u_cntr++;
+						}
+						else 
+							u_cntr++;
+					}
 
 					int match = 0;
 
@@ -476,16 +535,59 @@ int main( int argc, char **argv )
 	
 					if( !match ) continue;
 
+					if( only_donor )
+					{
+#if 0
+						for( int a1 = first_atom[0][u]; a1 < first_atom[0][u] + num_atom[0][u]; a1++ ) 
+						for( int a2 = first_atom[1][u2]; a2 < first_atom[1][u2] + num_atom[1][u2]; a2++ ) 
+						{
+							if( !(at[a1].atname[0] == 'O' && at[a2].atname[0] == 'H' ) &&
+							    !(at[a2].atname[0] == 'O' && at[a1].atname[0] == 'H' ) )
+								continue;
+						
+							// only donors:
+							if( pass == 0 && at[a1].atname[0] != 'H' ) continue;
+							if( pass == 1 && at[a2].atname[0] != 'H' ) continue;
+	
+							double adr[3] = { at[a1].x - at[a2].x, at[a1].y - at[a2].y, at[a1].z - at[a2].z };	
+
+							while( adr[0] < -La/2 )adr[0] += La;
+							while( adr[0] > La/2 ) adr[0]-= La;
+							while( adr[1] < -Lb/2 )adr[1] += Lb;
+							while( adr[1] > Lb/2 ) adr[1]-= Lb;
+							while( adr[2] < -Lc/2 )adr[2] += Lc;
+							while( adr[2] > Lc/2 ) adr[2]-= Lc;
+
+							double r = sqrt(adr[0]*adr[0]+adr[1]*adr[1]+adr[2]*adr[2]);
+
+							if( r < hbond_cut )
+							{
+								int bond_index = binaryHBonder( at+a1, at+a2 );
+								if( bond_index >= 0 && !(binary_hbond & (1<<bond_index)) )
+									binary_hbond += (1<<bond_index); 
+							}
+						}
+				
+						if( binary_hbond == 0 ) continue;
+#endif
+					}
+
 					if( apair->cntr < apair->len )
 					{
 						if( nhmm[uoff] < max_simul )
 						{
 							hmm_state[uoff*max_simul+nhmm[uoff]]  = apair->obs_seq[apair->cntr];
 							multi_state[uoff*max_simul+nhmm[uoff]] = apair->state_seq[apair->cntr];
+
 							nhmm[uoff]++;	
 							
 						}
-
+/*						else
+						{
+							printf("Exceeded max_simul.\n");
+							exit(1);
+						}
+*/
 						switch( apair->state_seq[apair->cntr] )
 						{	
 							case '0':
@@ -501,6 +603,7 @@ int main( int argc, char **argv )
 								break;
 						}
 					}
+				}
 				}
 			}
 
@@ -529,6 +632,11 @@ int main( int argc, char **argv )
 			{
 				for( int u = 0; u < nunits_tot; u++ )
 				{
+					if( nhmm[u] >= 10 )
+					{
+						printf("OH NO!\n");
+						exit(1);
+					}
 					printf("%d", nhmm[u] );
 					for( int t = 0; t < nhmm[u]; t++ )
 						printf("%c", multi_state[u*max_simul+t]); 

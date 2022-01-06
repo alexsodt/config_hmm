@@ -7,6 +7,8 @@
 #include "util.h"
 #include "proc_definition.h"
 
+int matches_atomselect( const char *select, const char *target );
+
 int main( int argc, char **argv )
 {
 	char *buffer = (char *)malloc( sizeof(char) * 1000000 );
@@ -17,8 +19,10 @@ int main( int argc, char **argv )
 		"Commands: list_modes list_lipids av_curvature mode_time_series\n"
 		"\tlist_modes [q_cutoff=any]\n"
 		"\tlist_lipids [lipidName]\n"
-		"\tav_curvature [lipid_index=any] [lipid_name=any] [seg_name=any] [q_cutoff=any]\n"
+		"\tav_gauss [lipid_index=any] [lipid_name=any] [seg_name=any] [q_cutoff=any]\n"
+		"\tav_curvature [lipid_index=any] [lipid_name=any] [seg_name=any] [q_cutoff=any] [start=t1] [stop=t2]\n"
 		"\tmode_curvature [lipid_name=any] [atom_name=any] [definition.inp state_assignment] [n_select=any]\n"
+		"\tmode_curvature_err [lipid_name=any] [atom_name=any] [start=t1] [stop=t2] [definition.inp state_assignment] [n_select=any]\n"
 		"\ttrack_mode mode_index [time_between_frames=unset]\n"
 		"\tkc\n"
 		"\ttrack_rho mode_index res_name [time_between_frames=unset]\n";
@@ -200,6 +204,7 @@ int main( int argc, char **argv )
 	double *hq = (double *)malloc( sizeof(double) * 2 * N_QX * N_QY *2 );
 	double *lxy = (double *)malloc( sizeof(double) * 3 * nlipids );
 
+	int do_gauss = 0;
 	int do_curv = 0;
 	int do_config = 0;
 	int do_multistate = 0;
@@ -218,6 +223,8 @@ int main( int argc, char **argv )
 	seg_select[0] = '\0';
 	double q_cutoff = -1;
 	double time_between_frames = 0;
+	int start_frame=-1;
+	int stop_frame=-1;
 
 	FILE *pair_assignment = NULL;
 	const char *pdef_fileName = NULL;
@@ -248,7 +255,7 @@ int main( int argc, char **argv )
 
 		return -1;
 	}
-	else if( !strcasecmp( cmd, "mode_curvature") || !strcasecmp( cmd, "config_curvature") || !strcasecmp( cmd, "multistate_curvature") ) 
+	else if( !strcasecmp( cmd, "mode_curvature") || !strcasecmp( cmd, "config_curvature") || !strcasecmp( cmd, "multistate_curvature") || !strcasecmp( cmd, "mode_curvature_err")  ) 
 	{
 		if( !strcasecmp( cmd, "config_curvature") ) 
 			do_config = 1;	
@@ -271,8 +278,32 @@ int main( int argc, char **argv )
 			if( strlen(argv[5]) < 200 )
 				strcpy( atomname_select, argv[5] );
 		}
+
+		if( !strcasecmp( cmd, "mode_curvature_err" ) )
+		{
+			if( argc > 6 )
+				start_frame = atoi(argv[6]);
+			if( argc > 7 )
+				stop_frame = atoi(argv[7]);	
+			
+			if( argc > 9 )
+			{
+				pdef_fileName = argv[8];
+
+				pair_assignment = fopen(argv[9], "r");
 	
-		if( argc > 6 )
+				if( !pair_assignment ) 
+				{
+					printf("Couldn't open sphingolipid assignment file '%s'.\n", argv[9]);
+					exit(1);
+				}
+			}
+			if( argc > 10 && strcasecmp( argv[10], "any") )
+			{
+				n_select = atoi(argv[10]);		
+			}
+		} 
+		else if( argc > 6 )
 		{
 			if( argc < 8 )
 			{
@@ -287,18 +318,25 @@ int main( int argc, char **argv )
 
 			if( !pair_assignment ) 
 			{
-				printf("Couldn't open sphingolipid assignment file '%s'.\n", argv[6]);
+				printf("Couldn't open state assignment file '%s'.\n", argv[7]);
 				exit(1);
 			}
+			if( argc > 8 && strcasecmp( argv[8], "any") )
+			{
+				n_select = atoi(argv[8]);		
+			}
+			if( argc > 9 )
+				start_frame = atoi(argv[9]); 
+			if( argc > 10 )
+				stop_frame = atoi(argv[10]); 
 		}	
 
-		if( argc > 8 && strcasecmp( argv[8], "any") )
-		{
-			n_select = atoi(argv[8]);		
-		}
 	}
-	else if( !strcasecmp( cmd, "av_curvature") ) 
+	else if( !strcasecmp( cmd, "av_curvature") || !strcasecmp( cmd, "av_gauss") ) 
 	{	
+		if( !strcasecmp( cmd, "av_gauss" ) )
+			do_gauss = 1;
+
 		do_curv = 1;	
 		//"\tav_curvature [lipid_index=any] [lipid_name=any] [seg_name=any] [q_cutoff=any]\n"
 
@@ -330,7 +368,13 @@ int main( int argc, char **argv )
 				mode_select = atoi(argv[7]);
 				q_cutoff = -1;
 			}
-		}	
+		}
+		
+		if( argc > 8 )
+			start_frame = atoi(argv[8]); 
+		if( argc > 9 )
+			stop_frame = atoi(argv[9]); 
+				
 	}
 	else if( !strcasecmp( cmd, "track_mode") ) 
 	{
@@ -397,20 +441,33 @@ int main( int argc, char **argv )
 	if( pdef_fileName )
 	{
 		load_pair_definition( pdef_fileName );
-	
-		int index_offset = 0;
-		for( int pass = 0; pass < 2; pass++ )
+
+		int has_psf = loadPDefPSF() == 1 ;
+
+		if( has_psf )
 		{
-			if( is_sym() && pass > 0 ) break;
-	
 			for( int l = 0; l < nlipids; l++ )
 			{
-				if( !(atomname_select[0]) || !strcasecmp( lipidInfo[l].atomName, atomname_select) )
+				lipidInfo[l].pdef_index = getPDefIndex( lipidInfo[l].atomName, lipidInfo[l].resName, lipidInfo[l].segid, lipidInfo[l].res );
+	
+			}	
+		}
+		else
+		{ 
+			int index_offset = 0;
+			for( int pass = 0; pass < 2; pass++ )
+			{
+				if( is_sym() && pass > 0 ) break;
+		
+				for( int l = 0; l < nlipids; l++ )
 				{
-					if( use_atom( USE_ANYWHERE, pass, lipidInfo[l].res, lipidInfo[l].atomName, lipidInfo[l].resName, lipidInfo[l].segid ) )
+					if( !(atomname_select[0]) || matches_atomselect( atomname_select, lipidInfo[l].atomName) ) // || !strcasecmp( lipidInfo[l].atomName, atomname_select) )
 					{
-						lipidInfo[l].pdef_index = index_offset;
-						index_offset++;
+						if( use_atom( USE_ANYWHERE, pass, lipidInfo[l].res, lipidInfo[l].atomName, lipidInfo[l].resName, lipidInfo[l].segid ) )
+						{
+							lipidInfo[l].pdef_index = index_offset;
+							index_offset++;
+						}
 					}
 				}
 			}
@@ -453,6 +510,16 @@ int main( int argc, char **argv )
 	memset( ntot_t, 0, sizeof(double) * nstateSpace * max_time );
 
 	int nmodes_used = 0;
+
+	char *used_string = (char *)malloc( sizeof(char) * 1024 );
+	int atoms_use[30];
+	int atoms_use_len[30];
+	int natom_use=0;
+	int use_init = 0;
+
+	double avK=0,navK=0;
+	int g_nmodes_used = 0;
+	sprintf( used_string, "#Used: ");
 
 	for( int pass = 0; pass < npasses; pass++ )
 	{
@@ -535,6 +602,7 @@ int main( int argc, char **argv )
 			getLine( ldataFile, buffer );
 			if( feof(ldataFile) ) break;
 			parse = buffer + 1;
+
 			int lip = 0;
 	
 			while( *parse && lip < nlipids )
@@ -563,7 +631,6 @@ int main( int argc, char **argv )
 			double rho_q_o_0 = 0;	
 			double rho_q_o_1 = 0;	
 	
-	
 
 			if( do_curv || track_rho )
 			{
@@ -581,6 +648,20 @@ int main( int argc, char **argv )
 						break;
 					}
 				}
+			}
+			
+			if( start_frame >= 0 && frame < start_frame ) 	
+			{
+				frame++;
+				continue;
+			}
+			if( stop_frame >= 0 && frame >= stop_frame ) 	
+			{
+				frame++;
+				continue;
+			}
+			if( do_curv || track_rho )
+			{
 				double avc = 0;
 				double navc = 0;
 	
@@ -617,6 +698,13 @@ int main( int argc, char **argv )
 	
 							tread += 1;
 	
+							if( curp >= nlipids )
+							{
+								printf("There are too many lipids listed in the state file. Expected no more than %d.\n",
+										nlipids );
+								exit(1);
+							}
+
 							if( nconf == 0 )
 							{ // if there are no similarity centers listed, it's a monomer; assign to state 0.
 								cur_obs[curp*max_simul+nhmm[curp]] = 0;
@@ -643,6 +731,11 @@ int main( int argc, char **argv )
 									}
 									else if( do_multistate )
 									{
+										if( obs >= '6' )
+										{
+											printf("Check this.\n");
+										}
+
 										if( obs >= '0' && obs <= '9' )
 											iobs = 1 + obs - '0'; // state 0 is the monomer, everything else are dimer configs.
 										else
@@ -698,9 +791,18 @@ int main( int argc, char **argv )
 									exit(1);
 									break;
 							}
-	
-							if( iobs >= max_nstates ) max_nstates = iobs+1;
+							
+							if( curp >= nlipids )
+							{
+								printf("There are too many lipids listed in the state file. Expected no more than %d.\n",
+										nlipids );
+								exit(1);
+							}
 
+	
+							if( iobs >= max_nstates ) {
+								max_nstates = iobs+1;
+							}
 							cur_obs[curp*max_simul+nhmm[curp]] = iobs;
 							nhmm[curp] = 1;
 
@@ -711,6 +813,8 @@ int main( int argc, char **argv )
 				}
 					
 				double my_use_hq[2] = {0,0};
+
+	
 
 				for( int lip = 0; lip < nlipids; lip++ )
 				{
@@ -733,9 +837,14 @@ int main( int argc, char **argv )
 					
 					if( seg_select[0] && strcasecmp( lipidInfo[lip].segid, seg_select) ) continue;	
 					if( res_select[0] && strcasecmp( lipidInfo[lip].resName, res_select) ) continue;	
-					if( atomname_select[0] && strcasecmp( lipidInfo[lip].atomName, atomname_select) ) continue;	
+//					if( atomname_select[0] && strcasecmp( lipidInfo[lip].atomName, atomname_select) ) continue;	
+					if( atomname_select[0] && !matches_atomselect( atomname_select, lipidInfo[lip].atomName) )
+						continue;
+	
+ // || !strcasecmp( lipidInfo[l].atomName, atomname_select) )
 					if( lipid_select >= 0 && lip != lipid_select ) continue;
 						
+
 					double x = lxy[3*lip+0];
 					double y = lxy[3*lip+1];
 					double z = lxy[3*lip+2];
@@ -744,127 +853,239 @@ int main( int argc, char **argv )
 					double lipid_c_0 = 0;
 					double lipid_c_1 = 0;
 					nmodes_used = 0;
-
-
-
-					for( int mode = 0; mode < nmodes; mode++ )
+				
+					if( !use_init )
 					{
-						double qx = modes[2*mode+0];
-						double qy = modes[2*mode+1];
-						double q = sqrt(qx*qx+qy*qy);
+						char used[256];
+						sprintf(used, "%s:%s", lipidInfo[lip].resName, lipidInfo[lip].atomName );
+						int repeated = 0;
 
-						if( track_rho && mode != mode_select ) continue;
-	
-						if( fabs(q) < 1e-10 ) continue;
-						if( q_cutoff >= 0 && q > q_cutoff) continue;
-						if( mode_select != -1 && mode != mode_select ) continue;	
-						nmodes_used++;				
-	
-						double l_ntot = leaflet_n[0] + leaflet_n[1];
-						double use_hq[2] = {0,0};
-					
-						if( bilayer_mode )
+						for( int ax = 0; ax < natom_use; ax++ )
 						{
-							use_hq[0] = hq[2*mode+0];
-							use_hq[1] = hq[2*mode+1];
+							if( strlen(used) == atoms_use_len[ax] && !strncasecmp( used, used_string + atoms_use[ax], strlen(used) ) )
+								repeated = 1; 
 						}
-						else
+
+						if( natom_use < 29 && !repeated && strlen(used) + strlen(used_string) < 1023 )
 						{
-							if( lipidInfo[lip].leaflet > 0 )
+							atoms_use[natom_use] = strlen(used_string);
+							atoms_use_len[natom_use] = strlen(used);
+							strcpy( used_string+strlen(used_string), used );
+							strcpy( used_string+strlen(used_string), " " );
+							natom_use++;
+						}
+					}
+	
+					if( do_gauss )
+					{
+						int nmodes_used = 0;
+						double l_avK = 0;
+
+						double c_mat[4] = {0,0,0,0};
+
+						for( int mode1 = 0; mode1 < nmodes; mode1++ )
+						for( int mode2 = 0; mode2 < nmodes; mode2++ )
+						{
+							double q1x = modes[2*mode1+0];
+							double q1y = modes[2*mode1+1];
+							double q1 = sqrt(q1x*q1x+q1y*q1y);
+							
+							double q2x = modes[2*mode2+0];
+							double q2y = modes[2*mode2+1];
+							double q2 = sqrt(q2x*q2x+q2y*q2y);
+
+							if( fabs(q1) < 1e-10 || fabs(q2) < 1e-10 ) continue;
+							if( q_cutoff >= 0 && (q1 > q_cutoff || q2 > q_cutoff) ) continue;
+		
+							double l_ntot = leaflet_n[0] + leaflet_n[1];
+							double use_hq1[2] = {0,0};
+							double use_hq2[2] = {0,0};
+						
+							if( bilayer_mode )
 							{
-								use_hq[0] = hq[4*mode+0];
-								use_hq[1] = hq[4*mode+1];
+								use_hq1[0] = hq[2*mode1+0];
+								use_hq1[1] = hq[2*mode1+1];
+								use_hq2[0] = hq[2*mode2+0];
+								use_hq2[1] = hq[2*mode2+1];
 							}
 							else
 							{
-								use_hq[0] = hq[4*mode+2];
-								use_hq[1] = hq[4*mode+3];
+								if( lipidInfo[lip].leaflet > 0 )
+								{
+									use_hq1[0] = hq[4*mode1+0];
+									use_hq1[1] = hq[4*mode1+1];
+									use_hq2[0] = hq[4*mode2+0];
+									use_hq2[1] = hq[4*mode2+1];
+								}
+								else
+								{
+									use_hq1[0] = hq[4*mode1+2];
+									use_hq1[1] = hq[4*mode1+3];
+									use_hq2[0] = hq[4*mode2+2];
+									use_hq2[1] = hq[4*mode2+3];
+								}
 							}
+		
+							double c_x = 0, c_y = 0;
+
+
+							c_mat[0] += lipidInfo[lip].leaflet * q1x*q1x * cos( q1x * x + q1y * y ) * use_hq1[0]; // xx
+							c_mat[1] += lipidInfo[lip].leaflet * q1x*q1y * cos( q1x * x + q1y * y ) * use_hq1[0]; // xy
+							c_mat[2] += lipidInfo[lip].leaflet * q1x*q1y * cos( q1x * x + q1y * y ) * use_hq1[0]; // yx	 
+							c_mat[3] += lipidInfo[lip].leaflet * q1y*q1y * cos( q1x * x + q1y * y ) * use_hq1[0]; // yy
+							
+							c_mat[0] += lipidInfo[lip].leaflet * q2x*q2x * cos( q2x * x + q2y * y ) * use_hq2[0]; // xx
+							c_mat[1] += lipidInfo[lip].leaflet * q2x*q2y * cos( q2x * x + q2y * y ) * use_hq2[0];	
+							c_mat[2] += lipidInfo[lip].leaflet * q2x*q2y * cos( q2x * x + q2y * y ) * use_hq2[0];	
+							c_mat[3] += lipidInfo[lip].leaflet * q2y*q2y * cos( q2x * x + q2y * y ) * use_hq2[0];	
+							
+							c_mat[0] += -lipidInfo[lip].leaflet * q1x*q1x * sin( q1x * x + q1y * y ) * use_hq1[1]; // xx
+							c_mat[1] += -lipidInfo[lip].leaflet * q1x*q1y * sin( q1x * x + q1y * y ) * use_hq1[1];	
+							c_mat[2] += -lipidInfo[lip].leaflet * q1x*q1y * sin( q1x * x + q1y * y ) * use_hq1[1];	
+							c_mat[3] += -lipidInfo[lip].leaflet * q1y*q1y * sin( q1x * x + q1y * y ) * use_hq1[1];	
+							
+							c_mat[0] += -lipidInfo[lip].leaflet * q2x*q2x * sin( q2x * x + q2y * y ) * use_hq2[1]; // xx
+							c_mat[1] += -lipidInfo[lip].leaflet * q2x*q2y * sin( q2x * x + q2y * y ) * use_hq2[1];	
+							c_mat[2] += -lipidInfo[lip].leaflet * q2x*q2y * sin( q2x * x + q2y * y ) * use_hq2[1];	
+							c_mat[3] += -lipidInfo[lip].leaflet * q2y*q2y * sin( q2x * x + q2y * y ) * use_hq2[1];	
+
+							
+							nmodes_used += 1;
 						}
+
+						double cxx = c_mat[0];
+						double cxy = c_mat[1];
+						double cyx = c_mat[2];
+						double cyy = c_mat[3];
+
+						double c_1 = 0.5 * (cxx+cyy-sqrt(cxx*cxx+4*cxy*cxy-2*cxx*cyy+cyy*cyy));							
+						double c_2 = 0.5 * (cxx+cyy+sqrt(cxx*cxx+4*cxy*cxy-2*cxx*cyy+cyy*cyy));							
+
+						avK += c_1*c_2;	
+						if( g_nmodes_used == 0 ) g_nmodes_used = nmodes_used;
+						navK += 1;
+					}
+					else
+					{
+						for( int mode = 0; mode < nmodes; mode++ )
+						{
+							double qx = modes[2*mode+0];
+							double qy = modes[2*mode+1];
+							double q = sqrt(qx*qx+qy*qy);
 	
-						if( fabs(qx-0.029920) < 1e-5 && fabs(qy) < 1e-8 )
-						{
-							my_use_hq[0] = use_hq[0];	
-							my_use_hq[1] = use_hq[1];	
-						}
-
-						if( lipidInfo[lip].leaflet < 0 )
-						{
-							rho_q_i_0 += cos(qx * x + qy * y) / (La*Lb); 
-							rho_q_i_1 -= sin(qx * x + qy * y) / (La*Lb); 
-						}
-						else
-						{
-							rho_q_o_0 += cos(qx * x + qy * y) / (La*Lb); 
-							rho_q_o_1 -= sin(qx * x + qy * y) / (La*Lb); 
-						}
-						double cr_c=0,cr_s=0;
-
-
-						if( lipidInfo[lip].leaflet > 0 )
-						{
-							cr_c   = lipidInfo[lip].leaflet * qx*qx * cos( qx * x + qy * y ) * use_hq[0]; 
-							cr_c  += lipidInfo[lip].leaflet * qy*qy * cos( qx * x + qy * y ) * use_hq[0]; 
-							cr_s   =-lipidInfo[lip].leaflet * qx*qx * sin( qx * x + qy * y ) * use_hq[1];
-							cr_s  +=-lipidInfo[lip].leaflet * qy*qy * sin( qx * x + qy * y ) * use_hq[1];
-
-						}
-						else
-						{
-							cr_c   = lipidInfo[lip].leaflet * qx*qx * cos( qx * x + qy * y ) * use_hq[0]; 
-							cr_c  += lipidInfo[lip].leaflet * qy*qy * cos( qx * x + qy * y ) * use_hq[0]; 
-							cr_s   =-lipidInfo[lip].leaflet * qx*qx * sin( qx * x + qy * y ) * use_hq[1];
-							cr_s  +=-lipidInfo[lip].leaflet * qy*qy * sin( qx * x + qy * y ) * use_hq[1];
-						}
+							if( track_rho && mode != mode_select ) continue;
+		
+							if( fabs(q) < 1e-10 ) continue;
+							if( q_cutoff >= 0 && q > q_cutoff) continue;
+							if( mode_select != -1 && mode != mode_select ) continue;	
+							nmodes_used++;				
+		
+							double l_ntot = leaflet_n[0] + leaflet_n[1];
+							double use_hq[2] = {0,0};
 						
-						if( fabs(qy) < 1e-9 ) {
-
-						
-						if( fabs(qx+2.992000e-02) < 1e-5 ) 
-						{
-						}
-
-						}
-
-						
-//						printf("x: %le y: %le cr_c: %le cr_s: %le qx %le qy %le\n", x, y, cr_c, cr_s, qx, qy );
-	
-						av_dz_c += lipidInfo[lip].leaflet * qx*qx *cos( qx * x + qy * y ) * use_hq[0];
-						av_dz_c += lipidInfo[lip].leaflet * qx*qy *cos( qx * x + qy * y ) * use_hq[0];
-						av_dz_c += -lipidInfo[lip].leaflet * qx*qx *sin( qx * x + qy * y ) * use_hq[1];
-						av_dz_c += -lipidInfo[lip].leaflet * qy*qy *sin( qx * x + qy * y ) * use_hq[1];
-//						av_dz_c += lipidInfo[lip].leaflet * sin( qx * x + qy * y ) * use_hq[1];
-						av_dz   += z;
-						nav_dz  += 1;
-
-						lipid_c_0 += cr_c;
-						lipid_c_1 += cr_s;
-
-
-						lipid_c += cr_c+cr_s;
-						lipidInfo[lip].avc += cr_c+cr_s;
-			
-
-						if( n_select == -1 || n_select == n_states_to_write )
-						{
-							for( int sx = 0; sx < n_states_to_write; sx++ )
-							{	
-								int cur_state_write = states[sx];
-	
-								tot_av_c_t_m[cur_state_write*max_time*nmodes+mode*max_time+cur_time] += cr_c + cr_s;
-								tot_av_c_m[cur_state_write*nmodes+mode] += cr_c + cr_s;
-	
-								ntot_m[cur_state_write*nmodes+mode] += 1;
-								ntot_t_m[cur_state_write*nmodes*max_time+mode*max_time+cur_time] += 1;
-	
-								tot_av_c_t[cur_state_write*max_time+cur_time] += cr_c + cr_s;
-								tot_av_c[cur_state_write] += cr_c + cr_s;
+							if( bilayer_mode )
+							{
+								use_hq[0] = hq[2*mode+0];
+								use_hq[1] = hq[2*mode+1];
 							}
+							else
+							{
+								if( lipidInfo[lip].leaflet > 0 )
+								{
+									use_hq[0] = hq[4*mode+0];
+									use_hq[1] = hq[4*mode+1];
+								}
+								else
+								{
+									use_hq[0] = hq[4*mode+2];
+									use_hq[1] = hq[4*mode+3];
+								}
+							}
+		
+							if( fabs(qx-0.029920) < 1e-5 && fabs(qy) < 1e-8 )
+							{
+								my_use_hq[0] = use_hq[0];	
+								my_use_hq[1] = use_hq[1];	
+							}
+	
+							if( lipidInfo[lip].leaflet < 0 )
+							{
+								rho_q_i_0 += cos(qx * x + qy * y) / (La*Lb); 
+								rho_q_i_1 -= sin(qx * x + qy * y) / (La*Lb); 
+							}
+							else
+							{
+								rho_q_o_0 += cos(qx * x + qy * y) / (La*Lb); 
+								rho_q_o_1 -= sin(qx * x + qy * y) / (La*Lb); 
+							}
+							double cr_c=0,cr_s=0;
+	
+	
+							if( lipidInfo[lip].leaflet > 0 )
+							{
+								cr_c   = lipidInfo[lip].leaflet * qx*qx * cos( qx * x + qy * y ) * use_hq[0]; 
+								cr_c  += lipidInfo[lip].leaflet * qy*qy * cos( qx * x + qy * y ) * use_hq[0]; 
+								cr_s   =-lipidInfo[lip].leaflet * qx*qx * sin( qx * x + qy * y ) * use_hq[1];
+								cr_s  +=-lipidInfo[lip].leaflet * qy*qy * sin( qx * x + qy * y ) * use_hq[1];
+	
+							}
+							else
+							{
+								cr_c   = lipidInfo[lip].leaflet * qx*qx * cos( qx * x + qy * y ) * use_hq[0]; 
+								cr_c  += lipidInfo[lip].leaflet * qy*qy * cos( qx * x + qy * y ) * use_hq[0]; 
+								cr_s   =-lipidInfo[lip].leaflet * qx*qx * sin( qx * x + qy * y ) * use_hq[1];
+								cr_s  +=-lipidInfo[lip].leaflet * qy*qy * sin( qx * x + qy * y ) * use_hq[1];
+							}
+							
+							if( fabs(qy) < 1e-9 ) {
+	
+							
+							if( fabs(qx+2.992000e-02) < 1e-5 ) 
+							{
+							}
+	
+							}
+	
+							
+	//						printf("x: %le y: %le cr_c: %le cr_s: %le qx %le qy %le\n", x, y, cr_c, cr_s, qx, qy );
+		
+							av_dz_c += lipidInfo[lip].leaflet * qx*qx *cos( qx * x + qy * y ) * use_hq[0];
+							av_dz_c += lipidInfo[lip].leaflet * qx*qy *cos( qx * x + qy * y ) * use_hq[0];
+							av_dz_c += -lipidInfo[lip].leaflet * qx*qx *sin( qx * x + qy * y ) * use_hq[1];
+							av_dz_c += -lipidInfo[lip].leaflet * qy*qy *sin( qx * x + qy * y ) * use_hq[1];
+	//						av_dz_c += lipidInfo[lip].leaflet * sin( qx * x + qy * y ) * use_hq[1];
+							av_dz   += z;
+							nav_dz  += 1;
+	
+							lipid_c_0 += cr_c;
+							lipid_c_1 += cr_s;
+	
+	
+							lipid_c += cr_c+cr_s;
+							lipidInfo[lip].avc += cr_c+cr_s;
+				
+	
+							if( n_select == -1 || n_select == n_states_to_write )
+							{
+								for( int sx = 0; sx < n_states_to_write; sx++ )
+								{	
+									int cur_state_write = states[sx];
+		
+									tot_av_c_t_m[cur_state_write*max_time*nmodes+mode*max_time+cur_time] += cr_c + cr_s;
+									tot_av_c_m[cur_state_write*nmodes+mode] += cr_c + cr_s;
+		
+									ntot_m[cur_state_write*nmodes+mode] += 1;
+									ntot_t_m[cur_state_write*nmodes*max_time+mode*max_time+cur_time] += 1;
+		
+									tot_av_c_t[cur_state_write*max_time+cur_time] += cr_c + cr_s;
+									tot_av_c[cur_state_write] += cr_c + cr_s;
+								}
+							}
+	
+							avc += cr_c + cr_s;
+	//						if( frame == 225 && (!strcasecmp(lipidInfo[lip].segid, "GLPA47") || !strcasecmp(lipidInfo[lip].segid, "GLPA49")) )
+	//							printf("cr: %le cr_s: %le\n", cr_c, cr_s );
 						}
-
-						avc += cr_c + cr_s;
-//						if( frame == 225 && (!strcasecmp(lipidInfo[lip].segid, "GLPA47") || !strcasecmp(lipidInfo[lip].segid, "GLPA49")) )
-//							printf("cr: %le cr_s: %le\n", cr_c, cr_s );
 					}
 					
 //					printf("%d %s %lf %lf c %lf %lf\n", lipidInfo[lip].leaflet, lipidInfo[lip].resName, x, y, lipid_c_0, lipid_c_1 );
@@ -875,14 +1096,22 @@ int main( int argc, char **argv )
 	
 					lipidInfo[lip].navc += 1;
 			
-					for( int sx = 0; sx < n_states_to_write; sx++ )
-					{	
-						int cur_state_write = states[sx];
-						ntot[cur_state_write] += 1;	
-						ntot_t[cur_state_write*max_time+cur_time] += 1;
+					if( n_select == -1 || n_select == n_states_to_write )
+					{
+						for( int sx = 0; sx < n_states_to_write; sx++ )
+						{	
+							int cur_state_write = states[sx];
+							ntot[cur_state_write] += 1;	
+							ntot_t[cur_state_write*max_time+cur_time] += 1;
+						}
 					}
 					navc += 1;
 				}
+
+				if( !use_init )
+					printf("%s\n", used_string );
+
+				use_init = 1;
 
 //				printf("hq: %le %le avc: %le\n", my_use_hq[0], my_use_hq[1], avc / navc );
 
@@ -923,6 +1152,11 @@ int main( int argc, char **argv )
 //				if( lipidInfo[l].navc > 0 )
 //					printf("%s %s %s %le\n", lipidInfo[l].segid, lipidInfo[l].resName, lipidInfo[l].atomName, lipidInfo[l].avc/lipidInfo[l].navc );
 			}
+			
+			if( do_gauss )
+			{
+				printf("<K>: %le (%d modes used).\n", avK/navK, g_nmodes_used);
+			}
 		}
 			
 		int nstates = max_nstates;
@@ -932,8 +1166,9 @@ int main( int argc, char **argv )
 			int state_lim = 0;
 			
 			for( int s = 0; s < nstates; s++ )
+			for( int t = 0; t < max_time; t++ )
 			{
-				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
+				if( ntot_t_m[s*max_time*nmodes+t] >= 0  )
 					state_lim = s+1;
 			}
 
@@ -953,7 +1188,13 @@ int main( int argc, char **argv )
 
 			for( int s = 0; s < state_lim; s++ )
 			{
-				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
+				int use = 0;
+				for( int t = 0; t < max_time; t++ )
+				{
+					if( ntot_t_m[s*max_time*nmodes+t] > 0  )
+						use = 1;
+				}
+				if( use  )
 				{
 					if( do_config )
 					{
@@ -979,10 +1220,27 @@ int main( int argc, char **argv )
 	
 					printf("\n");
 				}
+				else
+				{
+					printf("state %d curv", s );
+
+					for( int m = 0; m < nmodes; m++ )
+						printf(" %le", 0.0  );
+	
+					printf("\n");
+					
+				}	
 			}
+
 			for( int s = 0; s < state_lim; s++ )
 			{
-				if( ntot_t_m[s*max_time*nmodes+0*max_time] > 0  )
+				int use = 0;
+				for( int t = 0; t < max_time; t++ )
+				{
+					if( ntot_t_m[s*max_time*nmodes+t] >= 0  )
+						use = 1;
+				}
+				if( use  )
 				{
 					if( do_config )
 					{
@@ -1037,10 +1295,18 @@ int main( int argc, char **argv )
 					}	
 					printf("\n");
 				}
+				else
+				{
+					printf("state %d ebar", s );
+					for( int m = 0; m < nmodes; m++ )
+						printf("%le ", 0.0 );
+					printf("\n");
+				}
 			}
 		}
-		else if( do_curv  )	
+		else if( do_curv  && ! do_gauss )	
 		{
+
 			double ebar[nstates];
 			
 			int nebar = 7;
@@ -1116,6 +1382,39 @@ int main( int argc, char **argv )
 	}
 }
 
+int matches_atomselect( const char *select, const char *target )
+{
+	int s = 0;
+	char segment[256];
+	
+	while( s < strlen(select) )
+	{
+		int len = 0;
+	
+		
+		while( s+len < strlen(select) && select[s+len] != '+' )
+		{	
+			if( len < 255 )
+			{
+				segment[len] = select[s+len];
+				segment[len+1] = '\0';
+			}
+			len++;
+		}
 
+		if( !strcasecmp( segment, target ) )
+		{
+//			printf("%s with length %d matches %s.\n", select+s, len, target );
+			return 1;
+		}
+		s += len;
+
+		while( select[s] == '+' ) s++;
+	}
+			
+//	printf("%s didn't match %s.\n", select, target );
+
+	return 0;
+}
 
 

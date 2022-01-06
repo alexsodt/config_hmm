@@ -373,6 +373,28 @@ void copyNAMDBinary( FILE *theFile, struct atom_rec *at)
 	}
 }
 
+void loadDummy( struct atom_rec *at)
+{
+	for( int x = 0; x < psf_natoms; x++ )
+	{
+		at[x].bead = at_num[x];
+		at[x].res = res_num[x];
+		at[x].resname = (char *)malloc( sizeof(char) * (strlen(res_name[x])+1) );
+		at[x].atname = (char *)malloc( sizeof(char) * (strlen(at_name[x])+1) );
+		at[x].segid = (char *)malloc( sizeof(char) * (strlen(seg_name[x])+1) );
+		at[x].aux = 0;
+		at[x].segRes = 0;
+		strcpy( at[x].resname, res_name[x] );
+		strcpy( at[x].atname, at_name[x] );
+		strcpy( at[x].segid, seg_name[x] );
+		at[x].altloc = ' ';
+		at[x].chain = ' ';
+		at[x].x = -9999;
+		at[x].y = -9999;
+		at[x].z = -9999;
+	}
+}
+
 void loadCRD( FILE *theFile, struct atom_rec *at)
 {
 	char buffer[4096];
@@ -1011,6 +1033,14 @@ void readDCDHeader( FILE *theFile )
 
 void loadFrame( FILE *theFile, struct atom_rec *at )
 {
+	if( psf_natoms != curHeader.natom )
+	{
+		printf("NATOM mismatch (PSF/PDB %d, DCD %d).\n",
+			psf_natoms,	
+			curHeader.natom );
+		exit(1);
+	}
+
 	double a[3];
 	double b[3];
 	double c[3];

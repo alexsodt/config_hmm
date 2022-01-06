@@ -205,7 +205,7 @@ double alignStructuresOnAtomSet( double *xyz1_in,
 			printf("niter: %d %.12le %.12le.\n", niter, lam, lam_old );	
 			exit(1);
 		}
-	} while( fabs(lam -lam_old) > 1e-7 );
+	} while( fabs(lam -lam_old) > 1e-6 );
 	
 
 //	printf("G_A + G_B: %.12le\n", G_A + G_B );
@@ -483,7 +483,63 @@ void rotateArbitrary( double *xyz_rot, double *axis, double *origin, int nat, do
 double getChi2( double *xyz1, 
 			double *xyz2,
 			int nat )
-{	
+{
+	// this is a hack for ions.. if the ion's not there it will be 9999.999 ...
+	//
+	double temp1[3] = {xyz1[3*(nat/2)+0], xyz1[3*(nat/2)+1], xyz1[3*(nat/2)+2] };
+	double temp2[3] = {xyz2[3*(nat/2)+0], xyz2[3*(nat/2)+1], xyz2[3*(nat/2)+2] };
+	
+	int icode=0,jcode=0;
+
+	if( fabs(temp1[0]-9999.99)<0.1 && fabs(temp1[1]-9999.99)<0.1 && fabs(temp1[2]-9999.99)<0.1 )
+	{
+		// sub in the c.o.g.
+		double cog[3]={0,0,0};
+		for( int a = 0; a < nat; a++ )
+		{	
+			if( a != nat/2 )
+			{
+				cog[0] += xyz1[3*a+0];
+				cog[1] += xyz1[3*a+1];
+				cog[2] += xyz1[3*a+2];
+			}
+		}
+
+		cog[0] /= (nat-1);
+		cog[1] /= (nat-1);
+		cog[2] /= (nat-1);
+		
+		xyz1[3*(nat/2)+0] = cog[0];
+		xyz1[3*(nat/2)+1] = cog[1];
+		xyz1[3*(nat/2)+2] = cog[2];
+
+		icode=1;
+	}
+	
+	if( fabs(temp2[0]-9999.99)<0.1 && fabs(temp2[1]-9999.99)<0.1 && fabs(temp2[2]-9999.99)<0.1 )
+	{
+		// sub in the c.o.g.
+		double cog[3]={0,0,0};
+		for( int a = 0; a < nat; a++ )
+		{	
+			if( a != nat/2 )
+			{
+				cog[0] += xyz2[3*a+0];
+				cog[1] += xyz2[3*a+1];
+				cog[2] += xyz2[3*a+2];
+			}
+		}
+
+		cog[0] /= (nat-1);
+		cog[1] /= (nat-1);
+		cog[2] /= (nat-1);
+
+		xyz2[3*(nat/2)+0] = cog[0];
+		xyz2[3*(nat/2)+1] = cog[1];
+		xyz2[3*(nat/2)+2] = cog[2];
+		
+		jcode=1;
+	}
 
 	// subtract off center of mass of each xyz.
 
@@ -507,6 +563,11 @@ double getChi2( double *xyz1,
 		xyz1[3*a+2] -= cm1[2];
 	}
 
+	temp1[0] -= cm1[0];
+	temp1[1] -= cm1[1];
+	temp1[2] -= cm1[2];
+
+
 	double cm2[3] = {0,0,0};
 
 	for( int a = 0; a < nat; a++ )
@@ -526,7 +587,11 @@ double getChi2( double *xyz1,
 		xyz2[3*a+1] -= cm2[1];
 		xyz2[3*a+2] -= cm2[2];
 	}
-
+	
+	temp2[0] -= cm2[0];
+	temp2[1] -= cm2[1];
+	temp2[2] -= cm2[2];
+	
 	double dcm[3] = { cm2[0]-cm1[0], cm2[1]-cm1[1], cm2[2]-cm1[2] };
 
 	double S_xx = 0, S_xy = 0, S_xz = 0;	
@@ -598,8 +663,19 @@ double getChi2( double *xyz1,
 			printf("niter: %d %.12le %.12le.\n", niter, lam, lam_old );	
 			exit(1);
 		}
-	} while( fabs(lam -lam_old) > 1e-7 );
+	} while( fabs(lam -lam_old) > 1e-6 );
 	
+	
+	xyz1[3*(nat/2)+0] = temp1[0];
+	xyz1[3*(nat/2)+1] = temp1[1];
+	xyz1[3*(nat/2)+2] = temp1[2];
+	
+	xyz2[3*(nat/2)+0] = temp2[0];
+	xyz2[3*(nat/2)+1] = temp2[1];
+	xyz2[3*(nat/2)+2] = temp2[2];
+
+	if( icode != jcode ) return 1e10;
+
 	return (G_A + G_B - 2 * lam)/nat;
 }
 
@@ -746,7 +822,7 @@ double alignStructuresOnAtomSetXY( double *xyz1_in,
 			printf("niter: %d %.12le %.12le.\n", niter, lam, lam_old );	
 			exit(1);
 		}
-	} while( fabs(lam -lam_old) > 5e-7 );
+	} while( fabs(lam -lam_old) > 1e-6 );
 	
 
 //	printf("G_A + G_B: %.12le\n", G_A + G_B );

@@ -16,7 +16,7 @@ int main( int argc, char **argv )
 
 	FILE *theFile = fopen(argv[1],"r");
 	
-	char *buffer = (char *)malloc( sizeof(char) * 100000 );
+	char *buffer = (char *)malloc( sizeof(char) * 1000000 );
 
 	getLine( theFile, buffer );
 

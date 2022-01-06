@@ -6,14 +6,14 @@
 #include "util.h"
 #include "proc_definition.h"
 
-const double cutoff = 20.0;
+static double cutoff = 14.0;
 
 
 int main( int argc, char **argv )
 {
 	if( argc < 4 )
 	{
-		printf("Syntax: printFullDimers psf definition.inp dimers.pdb\n");
+		printf("Syntax: printFullDimers psf definition.inp centers.pdb\n");
 		return 0;
 	}
 
@@ -33,12 +33,14 @@ int main( int argc, char **argv )
 
 	load_pair_definition( argv[2] );
 
+	cutoff = getCutoff();
+
 	int init_done = 0;
 	int nat = curNAtoms();
 
 	FILE *thePDB = fopen(argv[3],"r");
 
-	char *buffer = (char *)malloc( sizeof(char) * 100000 );
+	char *buffer = (char *)malloc( sizeof(char) * 1000000 );
 
 	while( !feof(thePDB) )
 	{
@@ -57,6 +59,9 @@ int main( int argc, char **argv )
 			int res1,res2;
 			char fileName[256];
 			int frame;
+
+			int nextra = 0;
+			const char *extra_string = NULL;
 
 			const char *t = buffer;
 
@@ -100,6 +105,16 @@ int main( int argc, char **argv )
 
 			int nr = sscanf(t, "frame %d", &frame );
 
+			t = advance_string( t, 2 );
+
+			if( !strncasecmp( t, "nextra", 6 ) )
+			{
+				sscanf( t, "nextra %d", &nextra );
+				t = advance_string(t, 2 );
+
+				extra_string = t;
+			}
+
 			FILE *dcdFile = fopen(fileName,"r" );
 			if( !dcdFile )
 			{
@@ -110,9 +125,30 @@ int main( int argc, char **argv )
 			readDCDHeader(dcdFile);
 			setAligned();
 			int nframes = curNFrames();
-	
+
+#define SEEK_IT
+
+#ifdef SEEK_IT
+			off_t fp = ftello(dcdFile);
+			loadFrame( dcdFile, at );
+
+			for( int a= 0; a < curNAtoms(); a++ )
+				at[a].zap();
+
+			off_t fp2 = ftello(dcdFile);
+		
+			off_t del_per = fp2-fp;
+			off_t offset = fp + del_per * (long)frame;
+
+			fseeko( dcdFile, offset, SEEK_SET );	
+#endif
 			int do_break = 0;
+
+			int f = frame;
+
+#ifndef SEEK_IT
 			for( int f = 0; f < nframes; f++ )
+#endif
 			{
 				double La, Lb, Lc;
 				double alpha,beta,gamma;
@@ -126,17 +162,43 @@ int main( int argc, char **argv )
 					int init = 1;
 					double last[3] = { 0,0,0};
 
+					for( int unit = 0; unit < 3; unit++ )
 					for( int a = 0; a < curNAtoms(); a++ )
 					{
 						int match = 0;
-						if( is_seg(0) && !strcasecmp( at[a].segid, segid1) )
+						if( is_seg(0) && !strcasecmp( at[a].segid, segid1) && unit == 0)
 							match = 1;
-						if( is_seg(1) && !strcasecmp( at[a].segid, segid2) )
+						if( is_seg(1) && !strcasecmp( at[a].segid, segid2) && unit == 1)
 							match = 1;
-						if( !is_seg(0) && !strcasecmp(at[a].resname, resName1) && at[a].res == res1 )
+						if( !is_seg(0) && !strcasecmp(at[a].resname, resName1) && at[a].res == res1 && unit == 0)
 							match = 1;
-						if( !is_seg(1) && !strcasecmp(at[a].resname, resName2) && at[a].res == res2 )
+						if( !is_seg(1) && !strcasecmp(at[a].resname, resName2) && at[a].res == res2 && unit == 1 )
 							match = 1;
+
+						if( nextra > 0 && unit == 2)
+						{
+							const char * t = extra_string;
+
+							for( int e = 0; e < nextra && t; e++ )
+							{
+								if( strncasecmp( at[a].segid, t, strlen(at[a].segid) ) )
+									continue;
+								while( *t && *t != '_' ) t+= 1;
+								if( !*t ) continue;
+								t+=1;
+								if( strncasecmp( at[a].resname, t, strlen(at[a].resname) ) )
+									continue;
+								while( *t && *t != '_' ) t+= 1;
+								if( !*t ) continue;
+								t+=1;
+								if( at[a].res != atoi(t) )
+									continue;
+
+								match = 1;
+							}
+						}
+						
+
 						if( !match ) continue;
 
 						if( !init )
@@ -159,13 +221,15 @@ int main( int argc, char **argv )
 						printATOM( stdout, at[a].bead, at[a].res, at+a );
 					}
 					printf("END\n");
+#ifndef SEEK_IT	
 					do_break = 1;
+#endif
 				}
 
 				for( int a= 0; a < curNAtoms(); a++ )
 					at[a].zap();
 
-				if( do_break ) break;
+			if( do_break ) break;
 
 			}
 			fclose(dcdFile);

@@ -9,6 +9,7 @@ int getNPSFCarbons( void );
 void putPSFCarbons( int *carbon_buffer );
 void loadPSF( FILE *theFile );
 void loadPSFfromPDB( FILE *theFile );
+void loadDummy( struct atom_rec * at );
 double PBCD( double *Lx, double *Ly, double *Lz, double *alpha, double *beta, double *gamma );
 int curNAtoms( void );
 int curNFrames( void );

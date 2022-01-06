@@ -7,6 +7,9 @@
 #include "comparison.h"
 #include "proc_definition.h"
 
+extern int debug_trigger;
+extern int current_letter;
+
 double normalize( double *dr )
 {
 	double lr = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
@@ -32,7 +35,7 @@ double cross( double *dr1, double *dr2, double *cp )
 }
 
 
-const double cutoff = 14.0;
+static double cutoff = 14.0;
 
 double getChi2Symm( double *, double *, int ); 
 
@@ -43,6 +46,8 @@ const char *require_hydroxyl_acceptor = "O3";
 
 double hbond_cut = 2.5;
 
+#define MAX_EXTRA	10
+
 struct tracked_pair
 {
 	int unit1;
@@ -52,6 +57,8 @@ struct tracked_pair
 	char *hmm_seq;
 	int hmm_len;
 	int hmm_space;
+	int nextra;
+	int extra[MAX_EXTRA];
 	struct tracked_pair *next;
 	int flag;
 	char *start_file;
@@ -67,7 +74,7 @@ int main( int argc, char **argv )
 		return 0;
 	}
 
-	char *buffer = (char *)malloc( sizeof(char)* 100000 );
+	char *buffer = (char *)malloc( sizeof(char)* 1000000 );
 	FILE *psfFile = fopen(argv[1], "r" );
 
 	if( ! psfFile )
@@ -80,6 +87,9 @@ int main( int argc, char **argv )
 		loadPSFfromPDB( psfFile );	
 	else
 		loadPSF( psfFile );
+
+	struct atom_rec *dummy = (struct atom_rec *)malloc( sizeof( struct atom_rec ) * curNAtoms() );
+	loadDummy( dummy );
 
 	aStructure *structs = NULL;
 	int nstructs = 0;
@@ -293,13 +303,15 @@ int main( int argc, char **argv )
 	int *unit_size[2];
 		unit_size[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
 		unit_size[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
-	int *unit_leaflet[2];
-		unit_leaflet[0]  = (int *)malloc( sizeof(int) * curNAtoms() );
-		unit_leaflet[1]  = (int *)malloc( sizeof(int) * curNAtoms() );
 	int nunits[2] = {0,0};
 	int natoms[2] = {0,0};
 
 	double *unit_r[2] = { NULL, NULL };
+	
+	// qualifies as an extra atom for some unit:
+	int *qual_extra = (int *)malloc( sizeof(int) * curNAtoms() );
+	memset( qual_extra, 0, sizeof(int) * curNAtoms() );
+	int nqual = 0; // this way we can loop over this set of atoms only, looking for nearby atoms.
 
 
 	int cntr = 0;
@@ -363,6 +375,8 @@ int main( int argc, char **argv )
 	
 	load_pair_definition( argv[3] );
 
+	cutoff = getCutoff();
+
 	binary_penalty = pair_binary_penalty();
 	binary_benefit = pair_binary_benefit();
 	hbond0_penalty = pair_hbond0_penalty();
@@ -414,6 +428,12 @@ int main( int argc, char **argv )
 				int cur_hex = 0;
 
 				char psegid[256];
+				
+				for( int a = 0; a < curNAtoms(); a++ )
+				{
+					if( used_as_ion( at[a].res, at[a].resname, at[a].segid, NULL ) >= 0 ) 
+						qual_extra[nqual++] = a;	
+				}
 
 				for( int pass = 0; pass < 2; pass++ )
 				{
@@ -496,12 +516,10 @@ int main( int argc, char **argv )
 
 					av_c_pos /= nav_c_pos;
 
-					if( n_pos > av_c_pos )
-						unit_leaflet[pass][u] = 1;
-					else
-						unit_leaflet[pass][u] = -1;
 				}
 
+
+				if( nextra() > MAX_EXTRA) { printf("Increase MAX_EXTRA and recompile.\n"); exit(1); }
 
 				unit_r[0] = (double *)malloc( sizeof(double) * 3 * nunits[0] );
 				unit_r[1] = (double *)malloc( sizeof(double) * 3 * nunits[1] );
@@ -534,9 +552,11 @@ int main( int argc, char **argv )
 
 			for( int u = 0; u < nunits[0]; u++ )
 			{
-				for( int u2 = u+1; u2 < nunits[1]; u2++ )
+				for( int u2 = 0; u2 < nunits[1]; u2++ )
 				{
 					if( is_sym() && u2 <= u ) continue;
+					
+					if( first_atom[0][u] == first_atom[1][u2] ) continue;								
 
 					double dr[3] = { 
 						unit_r[1][3*u2+0] - unit_r[0][3*u+0],
@@ -557,7 +577,62 @@ int main( int argc, char **argv )
 
 					double r = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
 					
-					if( r < cutoff )
+					int ions_covered = 1;
+					int num = nextra();
+					int extra_to_print[1+num];
+					double cenp[3] = { unit_r[0][3*u+0] + dr[0]/2, 
+							   unit_r[0][3*u+1] + dr[1]/2,		
+							   unit_r[0][3*u+2] + dr[2]/2 };		
+	
+
+					if( r < cutoff && num > 0 )
+					{
+						for( int i = 0; i < num; i++ )
+							extra_to_print[i] = -1;
+
+
+						for( int qx = 0; qx < nqual; qx++ )
+						{
+							int q = qual_extra[qx];
+
+							double max_r;
+							double qmr = -1;
+							int ex = used_as_ion( at[q].res, at[q].resname, at[q].segid, &max_r );
+
+							double dr[3] = { cenp[0] - at[q].x, cenp[1] - at[q].y, cenp[2] - at[q].z };
+	
+							double shift[3] = { 0,0,0};
+	
+							while( dr[0]+shift[0] < -La/2 ) shift[0] += La;
+							while( dr[0]+shift[0] > La/2 ) shift[0] -= La;
+							while( dr[1]+shift[1] < -Lb/2 ) shift[1] += Lb;
+							while( dr[1]+shift[1] > Lb/2 ) shift[1] -= Lb;
+							while( dr[2]+shift[2] < -Lc/2 ) shift[2] += Lc;
+							while( dr[2]+shift[2] > Lc/2 ) shift[2] -= Lc;
+							
+							dr[0] += shift[0];
+							dr[1] += shift[1];
+							dr[2] += shift[2];
+		
+							double r = sqrt(dr[0]*dr[0]+dr[1]*dr[1]+dr[2]*dr[2]);
+		
+							if( qmr < 0 || r < qmr )
+							{
+								qmr = r;
+ 								if( qmr < max_r )
+									extra_to_print[ex] = q;
+							}
+						}
+
+						for( int t = 0; t < num; t++ )
+						{
+							if( extra_to_print[t] < 0 )
+								ions_covered = 0;
+						}
+
+					}
+
+					if( r < cutoff && (ions_covered || allowNoIons())  )
 					{
 						long binary_hbond = 0;
 
@@ -587,6 +662,9 @@ int main( int argc, char **argv )
 							}
 						}
 
+						if( force_hbonds() && binary_hbond == 0 )
+							continue;
+
 						double *tcen = (double *) malloc( sizeof(double) * 3 * hmm_nat );
 	
 						int tp = 0;
@@ -597,6 +675,40 @@ int main( int argc, char **argv )
 							tcen[3*tp+2] = at[atom_list[0][unit_ptr[0][u]+ax]].z;
 							tp++;
 						}
+						
+						for( int ex = 0; ex < num; ex++ ) 
+						{
+							int q = extra_to_print[ex];
+
+							if( q >= 0 )
+							{
+							double dr[3] = { 
+								at[q].x - cenp[0],	
+								at[q].y - cenp[1] ,	
+								at[q].z - cenp[2] };	
+								
+							while( dr[0] < -La/2 )dr[0] += La;
+							while( dr[0] > La/2 ) dr[0]-= La;
+							while( dr[1] < -Lb/2 )dr[1] += Lb;
+							while( dr[1] > Lb/2 ) dr[1]-= Lb;
+							while( dr[2] < -Lc/2 )dr[2] += Lc;
+							while( dr[2] > Lc/2 ) dr[2]-= Lc;
+
+							double t[3] = { at[q].x, at[q].y, at[q].z };
+
+							tcen[3*tp+0] = cenp[0] + dr[0];
+							tcen[3*tp+1] = cenp[1] + dr[1];
+							tcen[3*tp+2] = cenp[2] + dr[2];
+							}
+							else
+							{
+								tcen[3*tp+0] = 9999.99;
+								tcen[3*tp+1] = 9999.99;
+								tcen[3*tp+2] = 9999.99;
+							}
+							tp++;
+						} 
+
 						for( int ax = 0; ax < unit_size[1][u2]; ax++ )
 						{
 							tcen[3*tp+0] = at[atom_list[1][unit_ptr[1][u2]+ax]].x + shift[0];
@@ -604,7 +716,6 @@ int main( int argc, char **argv )
 							tcen[3*tp+2] = at[atom_list[1][unit_ptr[1][u2]+ax]].z + shift[2];
 							tp++;
 						}
-
 
 
 						aStructure tcen_struct;
@@ -616,12 +727,23 @@ int main( int argc, char **argv )
 						double best_chi2 = 1e10;
 						int best_match = -1;
 
+						int r1 = at[first_atom[0][u]].res;
+						int r2 = at[first_atom[1][u2]].res;
+
+						if( f == 132 && (r1 == 1108 && r2 == 1225) || (r1 == 1225 && r2 == 1108 ) )
+						{
+//							printf("Debug this.\n");
+//							debug_trigger = 1;
+						} 
+
 						for( int pass = 0; pass < 2; pass++ )
 						{
 							for( int sc = 0; sc < nstructs; sc++ )
 							{
+								current_letter = sc;
+
 //								double lchi2 = getChi2Symm( tcen, structs + sc * 3 * hmm_nat, hmm_nat );	
-								double lchi2 = value_comparison( &tcen_struct, structs+sc, is_sym() ); 
+								double lchi2 = value_comparison( &tcen_struct, structs+sc, is_sym()  ); 
 
 								if( lchi2 < best_chi2 )
 								{
@@ -636,10 +758,19 @@ int main( int argc, char **argv )
 
 						for( struct tracked_pair *pair = pairs; pair; pair = pair->next )
 						{
-							if( 
-								(pair->unit1 == u && pair->unit2 == u2) ||
-								(pair->unit1 == u2 && pair->unit2 == u) )
-								gotit = pair;
+							if( is_sym() )
+							{
+								if( 
+									(pair->unit1 == u && pair->unit2 == u2) ||
+									(pair->unit1 == u2 && pair->unit2 == u) )
+									gotit = pair;
+							}
+							else
+							{
+								if( 
+									pair->unit1 == u && pair->unit2 == u2 )
+									gotit = pair;
+							}
 						}				
 
 						if( !gotit )
@@ -657,6 +788,11 @@ int main( int argc, char **argv )
 							gotit->start_file = (char *)malloc( sizeof(char) * (1 + strlen(argv[c]) ) );
 							strcpy( gotit->start_file, argv[c] );
 							gotit->start_frame = f;
+
+							gotit->nextra = num;
+							for( int e = 0; e < num; e++ )
+								gotit->extra[e] = extra_to_print[e];
+			
 						}
 							
 						gotit->flag = 1;	
@@ -683,183 +819,6 @@ int main( int argc, char **argv )
 						gotit->hmm_len += 1;
 
 						free(tcen);
-						
-						int do_DOPE_DOPE = 0;
-						int do_PSM_PSM = 0;
-
-						if( !strcasecmp( at[first_atom[0][u]].resname, "DOPE" ) && !strcasecmp( at[first_atom[1][u2]].resname, "DOPE") )
-							do_DOPE_DOPE = 1;
-						if( !strcasecmp( at[first_atom[0][u]].resname, "PSM" ) && !strcasecmp( at[first_atom[1][u2]].resname, "PSM") )
-							do_PSM_PSM = 1;
-
-						/************* a hack I put in for the PSM/PSM paper, remove for distribution ******/
-						if( do_DOPE_DOPE || do_PSM_PSM )
-						{	// Both DOPE
-							int C21_a = -1;
-							int C31_a = -1;
-							int C21_b = -1;
-							int C31_b = -1;
-							int N_a = -1;
-							int N_b = -1;
-				
-							static int printed_warning = 0;
-
-							if( do_DOPE_DOPE )
-							{
-								for( int ax = 0; ax < unit_size[0][u]; ax++ )
-								{
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "C21" ) )
-										C21_a = atom_list[0][unit_ptr[0][u]+ax];
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "C31" ) )
-										C31_a = atom_list[0][unit_ptr[0][u]+ax];
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "N" ) )
-										N_a = atom_list[0][unit_ptr[0][u]+ax];
-								}
-	
-								for( int ax = 0; ax < unit_size[1][u2]; ax++ )
-								{
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "C21" ) )
-										C21_b = atom_list[1][unit_ptr[1][u2]+ax];
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u]+ax]].atname, "C31" ) )
-										C31_b = atom_list[1][unit_ptr[1][u2]+ax];
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "N" ) )
-										N_b = atom_list[1][unit_ptr[1][u2]+ax];
-								}
-							}
-							else	
-							{
-								for( int ax = 0; ax < unit_size[0][u]; ax++ )
-								{
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "HNF" ) )
-										C21_a = atom_list[0][unit_ptr[0][u]+ax];
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "OF" ) )
-										C31_a = atom_list[0][unit_ptr[0][u]+ax];
-									if( !strcasecmp( at[atom_list[0][unit_ptr[0][u]+ax]].atname, "N" ) )
-										N_a = atom_list[0][unit_ptr[0][u]+ax];
-								}
-	
-								for( int ax = 0; ax < unit_size[1][u2]; ax++ )
-								{
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "HNF" ) )
-										C21_b = atom_list[1][unit_ptr[1][u2]+ax];
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u]+ax]].atname, "OF" ) )
-										C31_b = atom_list[1][unit_ptr[1][u2]+ax];
-									if( !strcasecmp( at[atom_list[1][unit_ptr[1][u2]+ax]].atname, "N" ) )
-										N_b = atom_list[1][unit_ptr[1][u2]+ax];
-								}
-							}	
-							if( (C21_a == -1 || C31_a == -1 || C21_b == -1 ||  C31_b == -1) )
-							{
-								if( !printed_warning )
-									printf("HACK present but couldn't find the atoms we expected.\n");
-								printed_warning = 1;
-							}
-							else	
-							{
-								double orientation_A = unit_leaflet[0][u];
-								double orientation_B = unit_leaflet[1][u2];
-
-								double dr_A[3] = { at[C21_a].x - at[C31_a].x,
-										   at[C21_a].y - at[C31_a].y,
-										   at[C21_a].z - at[C31_a].z };
-								double dr_B[3] = { at[C21_b].x - at[C31_b].x,
-										   at[C21_b].y - at[C31_b].y,
-										   at[C21_b].z - at[C31_b].z };
-								double dr_cen[3] = {    (at[C21_a].x + at[C31_a].x)/2 - (at[C21_b].x + at[C31_b].x)/2, 
-											(at[C21_a].y + at[C31_a].y)/2 - (at[C21_b].y + at[C31_b].y)/2, 
-								 			(at[C21_a].z + at[C31_a].z)/2 - (at[C21_b].z + at[C31_b].z)/2 }; 
-			
-
-								while( dr_cen[0] < -La/2 ) dr_cen[0]+=La;
-								while( dr_cen[0] >  La/2 ) dr_cen[0]-=La;
-								while( dr_cen[1] < -Lb/2 ) dr_cen[1]+=Lb;
-								while( dr_cen[1] >  Lb/2 ) dr_cen[1]-=Lb;
-								while( dr_cen[2] < -Lc/2 ) dr_cen[2]+=Lc;
-								while( dr_cen[2] >  Lc/2 ) dr_cen[2]-=Lc;
-								normalize(dr_A);
-								normalize(dr_B);
-								normalize(dr_cen);					
-								// make dr_A point at b. dr_cen is A - B, dr_A should have neg dot.
-								if( dr_A[0] * dr_cen[0] + dr_A[1] * dr_cen[1] + dr_A[2] * dr_cen[2] > 0 )
-								{
-									dr_A[0] *= -1;
-									dr_A[1] *= -1;
-									dr_A[2] *= -1;
-								} 
-								// make dr_A point at b. dr_cen is A - B, dr_B should have pos dot.
-								if( dr_B[0] * dr_cen[0] + dr_B[1] * dr_cen[1] + dr_B[2] * dr_cen[2] < 0 )
-								{
-									dr_B[0] *= -1;
-									dr_B[1] *= -1;
-									dr_B[2] *= -1;
-								} 
-								double phi_1 = (180.0/M_PI)*(orientation_A * dr_A[2] < 0 ? -1 : 1 ) * fabs(asin( dr_A[2] ));
-								double phi_2 = (180.0/M_PI)*(orientation_B * dr_B[2] < 0 ? -1 : 1 ) * fabs(asin( dr_B[2] ));
-								
-//								double dp = dr_A[0] * dr_B[0] + dr_A[1] * dr_B[1] + dr_A[2] * dr_B[2];
-//								double phi = (180.0/M_PI) * acos(dp);
-//								if( phi_1 + phi_2 < 0 ) phi *= -1;
-
-								activate_hack = 1;
-
-							
-								double nrm_A[3] = {0,0, (orientation_A < 0 ? -1. : 1.) };
-								double nrm_B[3] = {0,0, (orientation_B < 0 ? -1. : 1.) };
-					
-								double aux_A[3], ori_A[3];
-								cross( nrm_A, dr_A, aux_A );
-								cross(  dr_A, aux_A,ori_A );	
-								
-								double aux_B[3], ori_B[3];
-								cross( nrm_B, dr_B, aux_B );
-								cross( dr_B, aux_B,  ori_B );	
-
-								double perp_sub[3];
-								cross( nrm_A, dr_cen, perp_sub );
-								normalize(perp_sub);
-				
-								double dp_per_A = ori_A[0] * perp_sub[0] + ori_A[1] * perp_sub[1] + ori_A[2] * perp_sub[2];
-								double dp_per_B = ori_B[0] * perp_sub[0] + ori_B[1] * perp_sub[1] + ori_B[2] * perp_sub[2];
-
-								ori_A[0] -= dp_per_A * perp_sub[0];
-								ori_A[1] -= dp_per_A * perp_sub[1];
-								ori_A[2] -= dp_per_A * perp_sub[2];
-
-								ori_B[0] -= dp_per_B * perp_sub[0];
-								ori_B[1] -= dp_per_B * perp_sub[1];
-								ori_B[2] -= dp_per_B * perp_sub[2];
-
-
-
-								double dp_ori_cen_A = ori_A[0] * dr_cen[0] + ori_A[1] * dr_cen[1] + ori_A[2] * dr_cen[2];
-								double dp_ori_cen_B = ori_B[0] * dr_cen[0] + ori_B[1] * dr_cen[1] + ori_B[2] * dr_cen[2];
-
-								// component  in the dr_AB x z plane.
-								normalize(ori_A);
-								normalize(ori_B);
-								double alt_phi_1 = (180.0/M_PI)*(dp_ori_cen_A < 0 ? -1  : 1 ) * acos( fabs(ori_A[2]) );
-								double alt_phi_2 = (180.0/M_PI)*(dp_ori_cen_B > 0 ? -1  : 1 ) * acos( fabs(ori_B[2]) );
-
-								if( best_match == 3 && 0)
-								{
-									printf("%d %d phi1/2: %lf %lf alt phi1/2: %lf %lf\n", 
-										at[first_atom[0][u]].res,
-										at[first_atom[1][u2]].res,
-											phi_1, phi_2, alt_phi_1, alt_phi_2 );
-								}
-
-								if( best_match >=0 && best_match < 52 )
-								{
-									av_angle[best_match] += alt_phi_1+alt_phi_2;
-									nav_angle[best_match] += 1;
-								}
-							}
-						} 
-
-
-						/************* end hack *****/
-
-
 					} 
 				}
 			}
@@ -876,6 +835,7 @@ int main( int argc, char **argv )
 						prev->next = next;
 					else
 						pairs = next;
+
 					if( strlen(pair->hmm_seq) > 20 )
 					{
 						char *state = (char *)malloc( sizeof(char) * (1 + pair->hmm_len) ) ;
@@ -897,12 +857,22 @@ int main( int argc, char **argv )
 
 						if( is_seg(1) == 0 )
 							fprintf(hmmFile, " %s %d", 
-								at[atom_list[1][unit_ptr[1][pair->unit1]]].resname,
-								at[atom_list[1][unit_ptr[1][pair->unit1]]].res );
+								at[atom_list[1][unit_ptr[1][pair->unit2]]].resname,
+								at[atom_list[1][unit_ptr[1][pair->unit2]]].res );
 						else
 							fprintf(hmmFile, " %s", 
-								at[atom_list[1][unit_ptr[1][pair->unit1]]].segid );
-							
+								at[atom_list[1][unit_ptr[1][pair->unit2]]].segid );
+
+						fprintf(hmmFile, " nextra %d", nextra() ); 
+						
+						for( int i = 0; i <  nextra(); i++ )
+						{
+							if( pair->extra[i] >= 0 )
+								fprintf(hmmFile, " %s %s %d", at[pair->extra[i]].segid, at[pair->extra[i]].resname, at[pair->extra[i]].res );						
+							else
+								fprintf(hmmFile, " NULL NULL 0");
+	
+						}
 						fprintf(hmmFile, " starting in dcd %s frame %d, ending in dcd %s frame %d.\n",
 							pair->start_file,
 							pair->start_frame,
@@ -962,7 +932,16 @@ int main( int argc, char **argv )
 				fprintf(hmmFile, " %s %d", resname2, res2 ); 
 			else
 				fprintf(hmmFile, " %s",  segname2 );
-				
+						
+			fprintf(hmmFile, " nextra %d", nextra() ); 
+						
+			for( int i = 0; i <  nextra(); i++ )
+			{
+				if( pair->extra[i] >= 0 )
+					fprintf(hmmFile, " %s %s %d", dummy[pair->extra[i]].segid, dummy[pair->extra[i]].resname, dummy[pair->extra[i]].res );						
+				else
+					fprintf(hmmFile, " NULL NULL 0");
+			}	
 			fprintf(hmmFile, " starting in dcd %s frame %d, ending in dcd %s frame %d (unterminated).\n",
 				pair->start_file,
 				pair->start_frame,

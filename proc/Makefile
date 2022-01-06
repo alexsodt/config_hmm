@@ -1,16 +1,18 @@
 #CC = /usr/bin/g++
 #F77 = /usr/bin/gfortran
 
-CC = mpic++
-F77 = mpif77
+CC = g++
+F77 = /opt/local/bin/gfortran-mp-11
 
-LDFLAGS = 
+LDFLAGS = -L /opt/local/lib -L /opt/local/lib/gcc11 -lboost_regex-mt
+CINCLUDE = -I /opt/local/include
 
-COPT = -g 
+
+COPT = -O2 
 
 .C.o: 
 	$(CC) $(GSLINC) \
-		 -o $*.o -c $(COPT)  -std=gnu++11 $*.C
+		 -o $*.o -c $(COPT) $(CINCLUDE) -std=gnu++11 $*.C
 
 .c.o:
 	gcc  $(QHULL)	$(COPT) $(CDEFN)	-c	$*.c
@@ -18,7 +20,7 @@ COPT = -g
 .f.o:
 	$(F77)  -c $*.f -o $*.o
 
-EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe make_dbg_data EncodeHMMLipidAllAtom curvFromModeRange multistateStats.exe cholHMM.exe estimatedFdR.exe
+EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe EncodeHMMLipidAllAtom curvFromModeRange multistateStats.exe cholHMM.exe estimatedFdR.exe EncodeHMMLipidAllAtomLoLd getCorrespondingHeight.exe printLipidPairTraj.exe splitAndAverageQDepData
  
 all: $(EXECS)
 
@@ -262,20 +264,23 @@ blas.a: $(BLASOBJS)
 lapack.a: $(LAPACKOBJS)
 	ar -r lapack.a $(LAPACKOBJS)
 
+EncodeHMMLipidAllAtomLoLd.o: EncodeHMMLipidAllAtom.C
+	$(CC) -DFORCE_LOLD -c EncodeHMMLipidAllAtom.C -o EncodeHMMLipidAllAtomLoLd.o
+
 extractDimers: extractDimers.o util.o dcd.o alignSet.o pdb.o geometry.o comparison.o lapack.a blas.a proc_definition.o
-	$(CC) $(LDFLAGS)  -o extractDimers extractDimers.o util.o dcd.o alignSet.o pdb.o geometry.o comparison.o proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) $(LDFLAGS)  -o extractDimers extractDimers.o util.o dcd.o alignSet.o pdb.o geometry.o comparison.o proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
 
 extractDimerHMM: extractDimerHMM.o util.o dcd.o alignSet.o pdb.o geometry.o lapack.a blas.a medoidLR.o comparison.o proc_definition.o
-	$(CC) $(LDFLAGS)  -o extractDimerHMM extractDimerHMM.o util.o dcd.o alignSet.o pdb.o geometry.o medoidLR.o comparison.o proc_definition.o -lboost_regex lapack.a blas.a -lstdc++ -lgfortran
+	$(CC) $(LDFLAGS)  -o extractDimerHMM extractDimerHMM.o util.o dcd.o alignSet.o pdb.o geometry.o medoidLR.o comparison.o proc_definition.o  lapack.a blas.a -lstdc++ -lgfortran
 
 printFullDimers: printFullDimers.o util.o dcd.o alignSet.o pdb.o geometry.o lapack.a blas.a comparison.o proc_definition.o
-	$(CC) $(LDFLAGS)  -o printFullDimers printFullDimers.o util.o dcd.o alignSet.o pdb.o geometry.o proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) $(LDFLAGS)  -o printFullDimers printFullDimers.o util.o dcd.o alignSet.o pdb.o geometry.o proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
 
 HMMAssignment: HMMAssignment.o util.o dcd.o alignSet.o pdb.o geometry.o lapack.a blas.a medoidLR.o comparison.o proc_definition.o
-	$(CC) $(LDFLAGS)  -o HMMAssignment HMMAssignment.o util.o dcd.o alignSet.o pdb.o geometry.o medoidLR.o comparison.o proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) $(LDFLAGS)  -o HMMAssignment HMMAssignment.o util.o dcd.o alignSet.o pdb.o geometry.o medoidLR.o comparison.o proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
 
 cluster: cluster.o medoidLR.o util.o dcd.o alignSet.o pdb.o geometry.o lapack.a blas.a comparison.o proc_definition.o
-	$(CC) -o cluster cluster.o medoidLR.o util.o dcd.o alignSet.o pdb.o geometry.o comparison.o lapack.a proc_definition.o blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) -o cluster cluster.o medoidLR.o util.o dcd.o alignSet.o pdb.o geometry.o comparison.o lapack.a proc_definition.o blas.a $(LDFLAGS)  -lstdc++ -lgfortran
 
 sortindex: sortindex.o
 	$(CC) -o sortindex sortindex.o
@@ -284,22 +289,32 @@ discretizedFourier.exe: discretizedFourier.o util.o   alignSet.o dcd.o pdb.o bla
 	$(CC) -o discretizedFourier.exe discretizedFourier.o util.o    alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) lapack.a blas.a -lstdc++ -lgfortran
 
 fourierExtract.exe: fourierExtract.o util.o  alignSet.o dcd.o pdb.o blas.a lapack.a proc_definition.o
-	$(CC) -o fourierExtract.exe fourierExtract.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) -o fourierExtract.exe fourierExtract.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
 
-make_dbg_data: make_dbg_data.o util.o pdb.o dcd.o alignSet.o lapack.a blas.a
-	$(CC) -o make_dbg_data make_dbg_data.o util.o pdb.o dcd.o alignSet.o lapack.a blas.a -lgfortran
 
 EncodeHMMLipidAllAtom: EncodeHMMLipidAllAtom.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a 
 	$(CC) $(LDFLAGS) -o EncodeHMMLipidAllAtom EncodeHMMLipidAllAtom.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a -lgfortran 
+
+EncodeHMMLipidAllAtomLoLd: EncodeHMMLipidAllAtomLoLd.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a 
+	$(CC) $(LDFLAGS) -o EncodeHMMLipidAllAtomLoLd EncodeHMMLipidAllAtomLoLd.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a -lgfortran 
 
 curvFromModeRange: curvFromModeRange.o util.o
 	$(CC) -o curvFromModeRange curvFromModeRange.o util.o
 
 multistateStats.exe: multistateStats.o util.o  alignSet.o dcd.o pdb.o blas.a lapack.a proc_definition.o
-	$(CC) -o multistateStats.exe multistateStats.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a -lboost_regex -lstdc++ -lgfortran
+	$(CC) -o multistateStats.exe multistateStats.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
 
 cholHMM.exe: cholHMM.o util.o
 	$(CC) -o cholHMM.exe cholHMM.o util.o
 
 estimatedFdR.exe: estimatedFdR.o util.o
 	$(CC) -o estimatedFdR.exe estimatedFdR.o util.o
+
+getCorrespondingHeight.exe: getCorrespondingHeight.o util.o
+	$(CC) -o getCorrespondingHeight.exe getCorrespondingHeight.o util.o
+
+printLipidPairTraj.exe: printLipidPairTraj.o util.o dcd.o alignSet.o pdb.o geometry.o lapack.a blas.a comparison.o proc_definition.o
+	$(CC) $(LDFLAGS)  -o printLipidPairTraj.exe printLipidPairTraj.o util.o dcd.o alignSet.o pdb.o geometry.o proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
+
+splitAndAverageQDepData: splitAndAverageQDepData.o util.o
+	$(CC) $(LDFLAGS) -o splitAndAverageQDepData splitAndAverageQDepData.o util.o -lstdc++ -lgfortran

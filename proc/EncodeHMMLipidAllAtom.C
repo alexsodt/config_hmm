@@ -11,6 +11,10 @@
 #define SUB_PRESS
 #define LEN 100
 
+#define LEAFLET_BOTH	0
+#define LEAFLET_UPPER	1
+#define LEAFLET_LOWER	2
+
 //#define FORCE_LOLD 
 
 #define REMOVE_COM
@@ -64,6 +68,57 @@ char code( int cnts[4] )
 	return array[cnts[0]*(N_TALLY+1)+cnts[1]];
 }
 
+char ext_code( int *cnts, int nres_types )
+{
+	static int done = 0;
+	static int *array=  NULL;//[(N_TALLY+1)*(N_TALLY+1)];
+
+	int total = (N_TALLY+1);
+
+	for( int x = 1; x < nres_types; x++ )
+		total *= (N_TALLY+1);
+
+	if( done == 0 )
+	{
+		// extra state for any protein.
+		array = (int *)malloc( sizeof(int) * ((N_TALLY+1)*(N_TALLY+1)+1) );
+
+		char cur = 'A';
+
+		for( int x = 0; x <= N_TALLY; x++ )
+		for( int y = 0; y <= N_TALLY; y++ )
+			array[x*(N_TALLY+1)+y] = 'a';
+
+		// x y other, fast slow implicit, 1 0 2
+		// 0 0 6
+		// 1 0 5
+		// 0 1 5
+
+		int max_state = 0;
+
+		for( int Neither = 0; Neither <= N_TALLY; Neither++ )
+		for( int y = 0; y <= Neither; y++ )
+		{
+			int x = Neither - y;
+
+			array[y*(N_TALLY+1)+x] = cur;
+
+			if( cur == 'Z' )
+				cur = 'a';
+			else
+				cur += 1;
+		}
+
+		prot_state = cur;
+		done = 1;
+	}	
+	
+	if( cnts[TYPE_PROT] > 0 )
+		return prot_state;
+
+	return array[cnts[0]*(N_TALLY+1)+cnts[1]];
+}
+
 struct elem
 {
 	int i, j,k;
@@ -74,21 +129,28 @@ int main( int argc, char **argv )
 {
 	char buffer[4096];
 
-	if( argc < 4 )
+	if( argc < 5 )
 	{
-		printf("Syntax: EncodeHMMLipid LipidsPerConcentrationPoint psf dcd\n");	
+		printf("Syntax: EncodeHMMLipid LipidsPerConcentrationPoint [upper|lower|both] psf dcd\n");	
 		return 0;
 	}
 
 	N_TALLY = atoi(argv[1]);
-	FILE *psfFile = fopen(argv[2], "r" );
+	FILE *psfFile = fopen(argv[3], "r" );
 	if( ! psfFile )
 	{
-		printf("Couldn't open PSF file '%s'.\n", argv[2] );
+		printf("Couldn't open PSF file '%s'.\n", argv[3] );
 		return 0;
 	}
 
-	if( !strcasecmp( argv[2] + strlen(argv[2])-3, "pdb" ) ) 
+	int leaflet_code = LEAFLET_BOTH;
+
+	if( !strcasecmp( argv[2], "upper") )
+		leaflet_code = LEAFLET_UPPER;
+	else if( !strcasecmp( argv[2], "lower") )
+		leaflet_code = LEAFLET_LOWER;
+
+	if( !strcasecmp( argv[3] + strlen(argv[3])-3, "pdb" ) ) 
 		loadPSFfromPDB( psfFile );    
         else
 		loadPSF( psfFile );
@@ -149,11 +211,11 @@ struct binnit
 	int nres = 0;
 
 #ifdef FORCE_LOLD
-	nres = 4;
+	nres = 3;
 	strcpy( resNames[0], "CHL1");
-	strcpy( resNames[1], "DPPC");
-	strcpy( resNames[2], "DOPC");
-	strcpy( resNames[3], "PROT");
+	strcpy( resNames[1], "PSM");
+	strcpy( resNames[2], "PLPC");
+//	strcpy( resNames[3], "PROT");
 #endif
 
 	int *use_atoms = (int *)malloc( sizeof(int) * curNAtoms() );
@@ -162,16 +224,20 @@ struct binnit
 	int state_size = curNAtoms();
 
 	char *states = (char *)malloc( sizeof(char)* curNAtoms() * state_size  );
+
+	int used_twice = 0;
 	
 	int nframes_use = 0;
 
-	for( int c = 3; c < argc; c++ )
+	int *leaflet = (int *)malloc( sizeof(int) * curNAtoms() );
+
+	for( int c = 4; c < argc; c++ )
 	{
 		FILE *dcdFile = fopen(argv[c], "r");
 	
 		if( ! dcdFile )
 		{
-			printf("Couldn't open dcd file '%s'.\n", argv[3] );
+			printf("Couldn't open dcd file '%s'.\n", argv[c] );
 			return 0;
 		}
 		readDCDHeader(dcdFile);
@@ -206,15 +272,84 @@ struct binnit
 			if( !init_done )
 			{
 				strcpy( resNames[TYPE_PROT], "PROT" );
+
+#define N_BINS_MOLDIST 100
+			
+			        double best_chi2 = 1e10;
+				double wrapto = 0;
+				double moldist[N_BINS_MOLDIST];
+				memset( moldist, 0, sizeof(double) * N_BINS_MOLDIST );
+
+				for( int ax = 0; ax < curNAtoms(); ax++ )
+				{
+					if( at[ax].atname[0] != 'C' ) continue;
+
+					int p = ax;
+
+					double tz = at[p].z*Lc;
+					
+					while( tz < 0 ) tz += Lc;
+					while( tz >= Lc ) tz -= Lc;
+					
+					int zb = N_BINS_MOLDIST * tz / Lc; // this is right
+					if( zb < 0 ) zb = 0;
+					if( zb >= N_BINS_MOLDIST ) zb = N_BINS_MOLDIST-1;
+					moldist[zb] += 1;
+				}
+	
+				for( int zb = 0; zb < N_BINS_MOLDIST; zb++ )
+				{
+				        double zv = Lc * (zb+0.5) / (double)N_BINS_MOLDIST;
+				
+				         int zlow  = zb- N_BINS_MOLDIST/2;
+				         int zhigh = zlow + N_BINS_MOLDIST;
+				
+				         double Lchi2 = 0;
+				         for( int iz = zlow; iz < zhigh; iz++ )
+				         {
+				                 double dz = Lc * (iz+0.5) / N_BINS_MOLDIST - zv;
+				
+				                 int iiz = iz;
+				                 while( iiz < 0 ) iiz += N_BINS_MOLDIST;
+				                 while( iiz >= N_BINS_MOLDIST ) iiz -= N_BINS_MOLDIST;
+				
+				                 Lchi2 += moldist[iiz] * (dz) * (dz);
+				         }
+				
+				         if( Lchi2 < best_chi2 )
+				         {
+				                 best_chi2 = Lchi2;
+				                 wrapto = zv/Lc;
+				         }
+				}
+	
+				// wrap around z periodic dimension
+
+				for( int p = 0; p < curNAtoms(); p++ )	
+				{
+					while( at[p].z - wrapto < -1./2 ) at[p].z += 1;
+					while( at[p].z - wrapto > 1./2 ) at[p].z -= 1;
+	
+					if( at[p].z > wrapto )
+						leaflet[p] = 1;
+					else
+						leaflet[p] = -1;
+				} 
+
 	
 				for( int a = 0; a < curNAtoms(); a++ )
 				{
+
 					if( !strcasecmp( at[a].resname, "TIP3" ) ) continue;
 					if( !strcasecmp( at[a].resname, "ZMA" ) ) continue; // ligand for A2A
 					if( !strcasecmp( at[a].resname, "POT" ) ) continue;
 					if( !strcasecmp( at[a].resname, "CLA" ) ) continue;
 					if( !strcasecmp( at[a].resname, "SOD" ) ) continue;
 	
+					if( !strcasecmp( at[a].resname, "BGLC") ) continue;
+					if( !strcasecmp( at[a].resname, "BGAL") ) continue;
+					if( !strncasecmp( at[a].resname, "ANE5", 4) ) continue;
+
 					if( !strcasecmp(at[a].resname, "CHL1" ) )
 					{
 						if( strcasecmp( at[a].atname, "O3") )
@@ -227,7 +362,9 @@ struct binnit
 					}
 					else if( strcasecmp( at[a].atname, "C2" ) && strcasecmp( at[a].atname, "C1F" ))
 						continue;
-					
+				
+					if( leaflet[a] == -1 && leaflet_code == LEAFLET_UPPER ) continue;	
+					if( leaflet[a] == 1 && leaflet_code == LEAFLET_LOWER ) continue;	
 
 					use_atoms[nuse] = a;
 					nuse++;
@@ -479,9 +616,6 @@ struct binnit
 	
 					grain_expand += 1;	
 				}
-	
-	//			if( px != 5 || py != 5 ) continue;
-	
 				done = 0;
 	
 				while( !done )

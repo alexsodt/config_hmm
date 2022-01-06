@@ -67,11 +67,11 @@ void getLine( FILE *theFile, char *theBuffer )
         {
                 char tc = fgetc(theFile);
 
-                if( tc != '\n' && i < 99999 )
+                if( tc != '\n' && i < 999999 )
                 {
                         theBuffer[i++] = tc;
                 }
-                else if( tc != '\n' && i >= 99999 )
+                else if( tc != '\n' && i >= 999999 )
 		{
 		}
 		else

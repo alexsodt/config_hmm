@@ -6,6 +6,7 @@
 #include "util.h"
 #include "proc_definition.h"
 #include "pdb.h"
+#include "dcd.h"
 
 using namespace boost;
 
@@ -31,7 +32,17 @@ struct hbonder
 	const char *at1;
 	const char *at2;
 
+	int unit_at1; // 0 (any), 1, 2
+	int unit_at2; 
 	struct hbonder *next;
+};
+
+struct ion_def
+{
+	const char *seg_name;
+	const char *res_off;	
+	const char *res_name; 
+	double max_dist;
 };
 
 struct pair_definition
@@ -44,13 +55,224 @@ struct pair_definition
 	int nat1;	
 	int nat2;	
 	hbonder *bonders;
+	int v2;
 
+	ion_def *ions;
+	int nions;
+	int force_hbonds;
+	int allow_no_ions;
+
+	double cutoff;
 	double binary_benefit;
 	double binary_penalty;
 	double hbond0_penalty;
+	char *psfFile;
+
 };
 
+
 static struct pair_definition pdef;
+
+// these functionalities are only available if you specify a PSF:
+
+struct pdef_site_record
+{
+	int index;
+	char *atName;
+	char *resName;
+	char *segName;
+	int res;
+};
+
+struct pdef_site_record *allSites = NULL;
+int sitesN = 0;
+int sitesNSpace = 0;
+
+int allowNoIons( void )
+{
+	return pdef.allow_no_ions;
+}
+
+double getCutoff( void )
+{
+	return pdef.cutoff;
+}
+
+int getPDefIndex( const char *atName, const char *resName, const char *segName, int res )
+{
+	for( int t = 0; t < sitesN; t++ )
+	{
+		if( res == allSites[t].res && 
+			!strcasecmp( atName, allSites[t].atName) &&
+			!strcasecmp( resName, allSites[t].resName) &&
+			!strcasecmp( segName, allSites[t].segName) )
+		{
+			return allSites[t].index;
+		}  
+	}	
+	
+	return -1;
+}
+
+void clearPDefPSF( void )
+{
+	for( int i = 0; i < sitesN; i++ )
+	{
+		free(allSites[sitesN].atName );
+		free(allSites[sitesN].resName );
+		free(allSites[sitesN].segName );
+	}
+	free(allSites);
+	allSites = NULL;
+}
+
+int loadPDefPSF( void )
+{
+	if( allSites )
+	{
+		printf("Error. Parameter definition PSF already loaded.\n");
+		exit(1);
+	}
+	
+	sitesNSpace = 10;
+	allSites = (pdef_site_record *)malloc( sizeof(pdef_site_record) * sitesNSpace );
+
+	if( pdef.psfFile )
+	{
+		FILE *theFile = fopen(pdef.psfFile,"r");
+
+		if( !theFile )	
+		{
+			printf("Couldn't open pdef/PSF file '%s'.\n", pdef.psfFile );
+			exit(1);
+		}
+
+		struct atom_rec *at = NULL;
+	
+		if( strlen( pdef.psfFile ) > 3 && !strncasecmp( pdef.psfFile + strlen(pdef.psfFile)-3, "pdb", 3 ) )
+		{
+			loadPSFfromPDB( theFile );
+			rewind(theFile);
+			at = (struct atom_rec *)malloc( sizeof(struct atom_rec) * curNAtoms() );
+			loadPDB( theFile, at ) ;
+		}
+		else
+		{
+			loadPSF( theFile );
+			at = (struct atom_rec *)malloc( sizeof(struct atom_rec) * curNAtoms() );
+			loadDummy( at );
+		}
+
+		int pres = -1;	
+		int cur_hex = 0;
+
+		char psegid[256];
+
+		int *mapped = (int *)malloc( sizeof(int) * curNAtoms() );
+		int *linked = (int *)malloc( sizeof(int) * curNAtoms() );
+		
+		for( int a = 0; a < curNAtoms(); a++ )
+		{
+			mapped[a] = -1;
+			linked[a] = -1;
+		}
+
+		int cur_unit = -1, cur_map = -1;
+		for( int pass = 0; pass < 2; pass++ )
+		{
+			pres = -1;
+			psegid[0] = '\0';
+
+			int op = 0;
+		
+			if( is_sym() && pass == 1 ) break;
+
+			for( int a = 0; a < curNAtoms(); a++ )
+			{
+				int is_new = 0;
+				if( is_seg(pass) )
+				{
+					if( strcasecmp( at[a].segid, psegid) )
+					{
+						op = 0;
+						is_new = 1;
+					}
+				}	
+				else
+				{
+					if( at[a].res != pres )
+					{
+						op = 0;
+						is_new = 1;
+					}
+				}
+		
+				if( use_atom( USE_ANYWHERE, pass, at[a].res, at[a].atname, at[a].resname, at[a].segid ) )
+				{
+					int used_unit = cur_unit;
+					if( is_new )
+					{
+						if( pass == 1 && mapped[a] >= 0 )
+						{
+							cur_map = mapped[a];
+					//		linked[cur_unit] = mapped[a];
+						}
+						else
+						{
+							cur_unit++;
+							cur_map=-1;
+							used_unit = cur_unit;
+						}
+						if( pass == 0 )
+							mapped[a] = cur_unit;
+						op=1;
+					}
+					
+					if( cur_map >= 0 )
+						used_unit = cur_map;
+			
+					if( sitesNSpace == sitesN )
+					{
+						sitesNSpace *= 2;
+						allSites = (pdef_site_record *)realloc( allSites, sizeof(struct pdef_site_record) * sitesNSpace ); 
+					}
+	
+					allSites[sitesN].atName = (char *)malloc( sizeof(char) * (1+strlen(at[a].atname) ) );
+					allSites[sitesN].resName = (char *)malloc( sizeof(char) * (1+strlen(at[a].resname) ) );
+					allSites[sitesN].segName = (char *)malloc( sizeof(char) * (1+strlen(at[a].segid) ) );
+		
+					strcpy( allSites[sitesN].atName, at[a].atname );
+					strcpy( allSites[sitesN].resName, at[a].resname );
+					strcpy( allSites[sitesN].segName, at[a].segid );
+					allSites[sitesN].res = at[a].res;
+	
+//					printf("Setting index to %d\n", cur_unit );
+					allSites[sitesN].index = used_unit; 
+					sitesN++;
+				}	
+			
+				pres = at[a].res;	
+				strcpy( psegid, at[a].segid );
+			}		
+		}
+
+		for( int a = 0; a < curNAtoms(); a++ )
+			at[a].zap();
+				
+		
+	}
+	else
+		return -1;		
+
+	return 1;
+}
+
+int countTrackedSites( void )
+{
+	if( !pdef.psfFile )
+		return -1;
+
+}
 
 int info_mode( void )
 {
@@ -71,15 +293,20 @@ int is_sym( void)
 
 void load_pair_definition( const char *pairDefinitionFileName )
 {
+	pdef.cutoff=14;
 	pdef.info=0;
 	pdef.sym = 0;
 	pdef.seg[0] = 0;
 	pdef.seg[1] = 0;
 	pdef.bonders = NULL;
+	pdef.force_hbonds = 0;
+	pdef.allow_no_ions = 0;
+	pdef.v2 = 0;
 
 	pdef.binary_benefit = 0;
 	pdef.binary_penalty = 0;
 	pdef.hbond0_penalty = 0;
+	pdef.psfFile = NULL;
 
 	FILE *theFile = fopen(pairDefinitionFileName, "r");
 
@@ -89,12 +316,13 @@ void load_pair_definition( const char *pairDefinitionFileName )
 		exit(1);
 	}
 
-	char *buffer = (char *)malloc( sizeof(char) * 100000 );
+	char *buffer = (char *)malloc( sizeof(char) * 1000000 );
 
 	for( int pass = 0; pass < 2; pass++ )
 	{
 		pdef.nat1=0;
 		pdef.nat2=0;
+		pdef.nions=0;
 		rewind(theFile);
 		while( !feof(theFile) )
 		{
@@ -114,8 +342,26 @@ void load_pair_definition( const char *pairDefinitionFileName )
 				pdef.seg[0] = 1;		
 			else if( !strncasecmp( tuse, "SEG2", 4 ) )
 				pdef.seg[1] = 1;		
+			else if( !strcasecmp( tuse, "V2" ) )
+				pdef.v2 = 1;		
 			else if( !strncasecmp( tuse, "SYM", 3 ) )
 				pdef.sym = 1;	
+			else if( !strncasecmp( tuse, "ALLOW_NO_IONS", 13 ) )
+				pdef.allow_no_ions = 1;	
+			else if( !strncasecmp( tuse, "FORCE_HBONDS", 11 ) )
+				pdef.force_hbonds = 1;	
+			else if( !strncasecmp( tuse, "CUTOFF", 6 ) )
+			{
+				double cutoff;
+				int nr = sscanf( tuse, "CUTOFF %lf", &cutoff );
+				if( nr == 1 )
+					pdef.cutoff = cutoff;
+				else
+				{
+					printf("Failed to read cutoff from line '%s'.\n", buffer );
+					exit(1);
+				}
+			}
 			else if( !strncasecmp( tuse, "BENEFIT", 7 ) )
 			{
 				double benefit;
@@ -140,7 +386,8 @@ void load_pair_definition( const char *pairDefinitionFileName )
 					exit(1);
 				}
 			}
-			else if( !strncasecmp( tuse, "HBOND0", 7 ) )
+/*			// not using this,, much too confusing
+ * else if( !strncasecmp( tuse, "HBOND0", 7 ) )
 			{
 				double HBOND0;
 				int nr = sscanf( tuse, "HBOND0 %lf", &HBOND0 );
@@ -151,6 +398,40 @@ void load_pair_definition( const char *pairDefinitionFileName )
 					printf("Failed to read HBOND0 from line '%s'.\n", buffer );
 					exit(1);
 				}
+			}
+*/
+			else if( !strncasecmp( tuse, "ION", 3 ) )
+			{
+				if( pass == 1 )
+				{
+					char *res_read = (char*)malloc( sizeof(char) * (1+strlen(tuse) ) );
+					char *seg_read = (char*)malloc( sizeof(char) * (1+strlen(tuse) ) );
+					char *res_num = (char*)malloc( sizeof(char) * (1+strlen(tuse) ) );
+					
+					double max_dist;	
+					int nr = sscanf(tuse, "ION %s %s %s %lf",
+						res_num, res_read, seg_read, &max_dist ); 
+		
+					if( nr != 4 )
+					{
+						printf("Failed to read ion record from line '%s'. Was expecting \"ION pair# res#-regex res-regex seg-regex max_distance\"\n", buffer );
+						exit(1); 
+					}
+					
+					res_read = (char *)realloc( res_read, sizeof(char)*(1+strlen(res_read)) );
+					seg_read = (char *)realloc( seg_read, sizeof(char)*(1+strlen(seg_read)) );
+					res_num = (char *)realloc( res_num, sizeof(char)*(1+strlen(res_num)) );
+				
+					pdef.ions[pdef.nions].res_name = res_read;
+					pdef.ions[pdef.nions].seg_name = seg_read;
+					pdef.ions[pdef.nions].res_off = res_num;
+					pdef.ions[pdef.nions].max_dist = max_dist;
+
+					pdef.nions++;
+
+				}
+				else if( pass == 0 )
+					pdef.nions++;
 			}
 			else if( !strncasecmp( tuse, "HBOND", 5) )
 			{
@@ -165,17 +446,32 @@ void load_pair_definition( const char *pairDefinitionFileName )
 					char *seg_read2 = (char*)malloc( sizeof(char) * (1+strlen(tuse) ) );
 					char *res_num2 = (char*)malloc( sizeof(char) * (1+strlen(tuse) ) );
 		
+					char unit_code1 = '*', unit_code2 = '*';
 					int pair_number = 0;
-					int nr = sscanf(tuse, "HBOND %s %s %s %s %s %s %s %s", 
-						res_num1, at_read1, res_read1, seg_read1,
-						res_num2, at_read2, res_read2, seg_read2 );
-		
-					if( nr != 8 )
+					if( pdef.v2 )
 					{
-						printf("Failed to read hbonding record from line '%s'. Was expecting \"HBOND res#-regex at-regex res-regex seg-regex\"\n", buffer );
-						exit(1); 
+						int nr = sscanf(tuse, "HBOND %s %s %s %c %s %s %s %s %c %s", 
+							res_num1, at_read1, res_read1, &unit_code1, seg_read1,
+							res_num2, at_read2, res_read2, &unit_code2, seg_read2 );
+		
+						if( nr != 10 )
+						{
+							printf("Failed to read hbonding record from line '%s'. Was expecting \"HBOND res#-regex at-regex res-regex {*|1|2} seg-regex ...\"\n", buffer );
+							exit(1); 
+						}
 					}
-	
+					else
+					{
+						int nr = sscanf(tuse, "HBOND %s %s %s %s %s %s %s %s", 
+							res_num1, at_read1, res_read1, seg_read1,
+							res_num2, at_read2, res_read2, seg_read2 );
+		
+						if( nr != 8 )
+						{
+							printf("Failed to read hbonding record from line '%s'. Was expecting \"HBOND res#-regex at-regex res-regex seg-regex\"\n", buffer );
+							exit(1); 
+						}
+					}
 					at_read1  = (char *)realloc( at_read1, sizeof(char)*(1+strlen(at_read1)) );
 					res_read1 = (char *)realloc( res_read1, sizeof(char)*(1+strlen(res_read1)) );
 					seg_read1 = (char *)realloc( seg_read1, sizeof(char)*(1+strlen(seg_read1)) );
@@ -196,6 +492,38 @@ void load_pair_definition( const char *pairDefinitionFileName )
 					hbond->resName2 = res_read2;
 					hbond->segName2 = seg_read2;
 					hbond->res_off2 = res_num2;
+					switch( unit_code1 )
+					{
+						case '*':
+							hbond->unit_at1 = 0; // could be any
+							break;
+						case '1':
+							hbond->unit_at1 = 1; 
+							break;
+						case '2':
+							hbond->unit_at1 = 2; 
+							break;
+						default:
+							printf("Can't interpret hydrogen bond code '%c'.\n", unit_code1 );
+							exit(1);
+							break;
+					}
+					switch( unit_code2 )
+					{
+						case '*':
+							hbond->unit_at2 = 0; // could be any
+							break;
+						case '1':
+							hbond->unit_at2 = 1; 
+							break;
+						case '2':
+							hbond->unit_at2 = 2; 
+							break;
+						default:
+							printf("Can't interpret hydrogen bond code '%c'.\n", unit_code2 );
+							exit(1);
+							break;
+					}
 
 					hbond->next = pdef.bonders;
 					pdef.bonders = hbond;
@@ -269,12 +597,27 @@ void load_pair_definition( const char *pairDefinitionFileName )
 						pdef.nat2++;
 				}
 			}
+			else if( !strncasecmp( tuse, "PSF", 3) )
+			{
+				if( pass == 1 )
+				{
+					pdef.psfFile = (char *)malloc( sizeof(char) * ( 1 + strlen(tuse) ) );
+					int nr = sscanf( tuse, "PSF %s", pdef.psfFile );	
+
+					if( nr != 1 )
+					{
+						printf("Failed to read the filename from PSF directive '%s'.\n", tuse );
+						exit(1);
+					}
+				}
+			}	
 		}
 		
 		if( pass == 0 )
 		{
 			pdef.lipid1 = (atom_def *)malloc( sizeof(atom_def) * pdef.nat1 );
 			pdef.lipid2 = (atom_def *)malloc( sizeof(atom_def) * pdef.nat2 );
+			pdef.ions = (ion_def *)malloc( sizeof(ion_def) * pdef.nions );
 		}
 	}	
 	
@@ -294,6 +637,55 @@ void load_pair_definition( const char *pairDefinitionFileName )
 
 	free(buffer);
 	fclose(theFile);
+}
+
+int force_hbonds( void )
+{
+	return pdef.force_hbonds;
+}
+
+int nextra( void )
+{
+	int nex = pdef.nions;
+
+	return nex;
+} 
+
+int used_as_ion( int res, const char *resname, const char *segname, double *check_r )
+{
+	int matches = -1;
+	char resNumBuffer[1024];
+	sprintf(resNumBuffer, "%d", res );
+
+	double check_rval = 0;
+
+	for( int i = 0; i < pdef.nions; i++ )
+	{
+		regex wild_seg(pdef.ions[i].seg_name);
+		regex wild_res(pdef.ions[i].res_name);
+		regex wild_off(pdef.ions[i].res_off);
+		
+		int ok = 1;
+
+		if( !regex_match(segname, wild_seg ) )
+			ok = 0;
+		if( !regex_match(resname, wild_res ) )
+			ok = 0;
+		if( !regex_match(resNumBuffer, wild_off ) )
+			ok = 0;
+
+		if( ok )
+		{
+			matches = i;
+			if( pdef.ions[i].max_dist > check_rval )
+			 	check_rval = pdef.ions[i].max_dist;
+		}
+	}
+
+	if( check_r && matches >= 0 )
+		*check_r = check_rval;
+
+	return matches;
 }
 
 int use_atom( int use_type, int seg, int res, const char *atname, const char *resname, const char *segname )
@@ -337,7 +729,12 @@ int use_atom( int use_type, int seg, int res, const char *atname, const char *re
 				regex wild_seg(pdef.lipid1[0].segName);
 				
 				if( regex_match( resname, wild_res) && regex_match(segname, wild_seg ) )
-					use_it = 1;
+				{
+					/*printf("Setting %s based on matches: %s and %s.\n", resname, 
+								(regex_match( resname, wild_res) ? "true" : "false"),
+								(regex_match( segname, wild_seg) ? "true" : "false") );
+				*/	use_it = 1;
+				}
 			}
 			else if( seg == 1  && pdef.nat2 > 0 )
 			{
@@ -452,5 +849,5 @@ double pair_binary_benefit(void)
 }
 double pair_hbond0_penalty(void)
 {
-	return pdef.hbond0_penalty; 
+	return pdef.binary_penalty; 
 }

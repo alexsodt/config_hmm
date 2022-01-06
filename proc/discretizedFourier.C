@@ -161,6 +161,11 @@ int main( int argc, char **argv )
 
 	int pres = at_leaflet[0].res;
 	int res_atom_start = 0;
+	
+	char pseg[256];
+	pseg[0] = '\0';
+	if( at_leaflet[0].segid )
+		sprintf( pseg, at[0].segid );
 
 	// center of mass from input pdb file. need not be zero centered.
 	double leaflet_av_z = 0;
@@ -178,9 +183,10 @@ int main( int argc, char **argv )
 	}
 	leaflet_av_z /= leaflet_n;
 
+
 	for( int a = 0; a <= nat; a++ )
 	{
-		if( a == nat || at[a].res != pres )
+		if( a == nat || at[a].res != pres || strcasecmp( at[a].segid, pseg ) )
 		{
 			int cur_leaflet = 0, alt_cur_leaflet = 0;
 
@@ -188,6 +194,22 @@ int main( int argc, char **argv )
 			{
 				// get the leaflet from the phosphorous atom if it's there.
 				if( at_leaflet[ta].atname[0] == 'P' ) 
+				{
+					if( at_leaflet[ta].z < leaflet_av_z )
+						cur_leaflet = -1;
+					else
+						cur_leaflet = 1;
+				}	
+				
+				if( at_leaflet[ta].atname[0] == 'O' && ( !strcasecmp(at_leaflet[ta].resname, "CHL1") || !strcasecmp(at_leaflet[ta].resname, "CHLU") || !strcasecmp( at_leaflet[ta].resname, "CHLF") || !strcasecmp(at_leaflet[ta].resname, "CHFU") ) ) 
+				{
+					if( at_leaflet[ta].z < leaflet_av_z )
+						cur_leaflet = -1;
+					else
+						cur_leaflet = 1;
+				}	
+				
+				if( at_leaflet[ta].atname[0] == 'O' && !strncasecmp(at_leaflet[ta].resname, "CER",3) ) 
 				{
 					if( at_leaflet[ta].z < leaflet_av_z )
 						cur_leaflet = -1;
@@ -208,8 +230,11 @@ int main( int argc, char **argv )
 			}	
 
 
-			if( cur_leaflet == 0 ) cur_leaflet = alt_cur_leaflet;
-			
+			if( cur_leaflet == 0 ) {
+				cur_leaflet = alt_cur_leaflet;
+				printf("WARNING! setting from alt leaflet.\n");
+				exit(1);
+			}
 			for( int ta = res_atom_start; ta < a; ta++ )
 				assign_leaflet[ta] = cur_leaflet;
 
@@ -219,6 +244,8 @@ int main( int argc, char **argv )
 		if( a == nat ) break;
 
 		pres = at[a].res;
+		if( at[a].segid )
+			strcpy( pseg, at[a].segid );
 	}
 
 	for( int a = 0; a < nat; a++ )
@@ -252,20 +279,19 @@ int main( int argc, char **argv )
 		}
 	}
 	fprintf(ldata, "\n");
-	
-	for( int xa = 0; xa < n_tatoms_check; xa++ )
+		
+	for( int a = 0; a < nat; a++ )
 	{
-		for( int a = 0; a < nat; a++ )
+		if( !strncasecmp( at[a].segid, "GLPA", 4 ) && strncasecmp( at[a].resname, "CER", 3) ) 
+			continue;
+		for( int xa = 0; xa < n_tatoms_check; xa++ )
 		{
-			int use = 0;
-			
-			if( !strncasecmp( at[a].segid, "GLPA", 4 ) && strncasecmp( at[a].resname, "CER", 3) ) 
-				continue;
 
 			if( !strcasecmp( at[a].atname, tailAtoms[xa] ) && (!strcasecmp( "any", res_tailAtoms[xa]) || !strcasecmp( at[a].resname, res_tailAtoms[xa])) )
 			{
 				tatom_list[nuset] = a;
 				nuset++;
+				break;
 			}
 		}
 	}
@@ -360,7 +386,8 @@ int main( int argc, char **argv )
 				
 				while( cur_set[3*ax+2] - last_align[3*ax+2] < -0.5 ) cur_set[3*ax+2] += 1.0;
 				while( cur_set[3*ax+2] - last_align[3*ax+2] >  0.5 ) cur_set[3*ax+2] -= 1.0;
-			}		
+			}
+//			printf("%le %le %le\n", cur_set[33*3+0], cur_set[33*3+1], cur_set[33*3+2] );
 		}
 	
 		memcpy( last_align, cur_set, sizeof(double) * 3 * (nuse+nuset) );
