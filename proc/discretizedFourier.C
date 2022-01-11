@@ -9,7 +9,6 @@
 #include "dcd.h"
 
 #define BILAYER_MODE
-//#define COMPUTE_D
 //#define DENSITY_CURVATURE_CORR
 
 //#define RANDOMIZE
@@ -199,6 +198,14 @@ int main( int argc, char **argv )
 						cur_leaflet = -1;
 					else
 						cur_leaflet = 1;
+				}
+
+				if( !strncasecmp( at_leaflet[ta].atname, "ROH", 3 ) )
+				{
+					if( at_leaflet[ta].z < leaflet_av_z )
+						cur_leaflet = -1;
+					else
+						cur_leaflet = 1;
 				}	
 				
 				if( at_leaflet[ta].atname[0] == 'O' && ( !strcasecmp(at_leaflet[ta].resname, "CHL1") || !strcasecmp(at_leaflet[ta].resname, "CHLU") || !strcasecmp( at_leaflet[ta].resname, "CHLF") || !strcasecmp(at_leaflet[ta].resname, "CHFU") ) ) 
@@ -215,7 +222,17 @@ int main( int argc, char **argv )
 						cur_leaflet = -1;
 					else
 						cur_leaflet = 1;
-				}	
+				}
+				
+				if( at_leaflet[ta].atname[0] == 'W' )
+				{
+					if( at_leaflet[ta].z < leaflet_av_z )
+						cur_leaflet = -1;
+					else
+						cur_leaflet = 1;
+				}
+
+	
 				// alternatively, get the leaflet from the surfaceAtom since we know it's there.
 				for( int xa = 0; xa < n_atoms_check; xa++ )
 				{
@@ -647,7 +664,7 @@ z
 
 		//		if( iqx == 2 && iqy == 0 )
 		//		printf("%lf %lf %lf %lf\n", x, y, z[1], z[2] );
-#ifdef COMPUTE_D
+#ifdef DO_THICKNESS
 				hq[(iqx*N_QY+iqy)*2+0] +=  (z[1]-z[2]) * cos( qx * x + qy * y ); 
 				hq[(iqx*N_QY+iqy)*2+1] -=  (z[1]-z[2]) * sin( qx * x + qy * y ); 
 #else
