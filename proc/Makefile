@@ -2,10 +2,13 @@
 #F77 = /usr/bin/gfortran
 
 CC = g++
-F77 = /opt/local/bin/gfortran-mp-11
+F77 = gfortran
+#/opt/local/bin/gfortran-mp-11
 
-LDFLAGS = -L /opt/local/lib -L /opt/local/lib/gcc11 -lboost_regex-mt
-CINCLUDE = -I /opt/local/include
+LDFLAGS = 
+#-L /opt/local/lib -L /opt/local/lib/gcc11 #-lboost_regex-mt
+CINCLUDE = 
+#-I /opt/local/include
 
 
 COPT = -O2 
@@ -20,7 +23,9 @@ COPT = -O2
 .f.o:
 	$(F77)  -c $*.f -o $*.o
 
-EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe EncodeHMMLipidAllAtom curvFromModeRange multistateStats.exe cholHMM.exe estimatedFdR.exe EncodeHMMLipidAllAtomLoLd getCorrespondingHeight.exe printLipidPairTraj.exe splitAndAverageQDepData
+EXECS = discretizedFourier_v2.exe fourierExtract.exe
+
+#EXECS = cluster extractDimers extractDimerHMM printFullDimers HMMAssignment sortindex discretizedFourier.exe fourierExtract.exe EncodeHMMLipidAllAtom curvFromModeRange multistateStats.exe cholHMM.exe estimatedFdR.exe EncodeHMMLipidAllAtomLoLd getCorrespondingHeight.exe printLipidPairTraj.exe splitAndAverageQDepData AtomHeight
  
 all: $(EXECS)
 
@@ -288,8 +293,9 @@ sortindex: sortindex.o
 discretizedFourier.exe: discretizedFourier.o util.o   alignSet.o dcd.o pdb.o blas.a lapack.a
 	$(CC) -o discretizedFourier.exe discretizedFourier.o util.o    alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) lapack.a blas.a -lstdc++ -lgfortran
 
-fourierExtract.exe: fourierExtract.o util.o  alignSet.o dcd.o pdb.o blas.a lapack.a proc_definition.o
-	$(CC) -o fourierExtract.exe fourierExtract.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) proc_definition.o lapack.a blas.a  -lstdc++ -lgfortran
+#proc_definition.o
+fourierExtract.exe: fourierExtract.o util.o  alignSet.o dcd.o pdb.o blas.a lapack.a 
+	$(CC) -o fourierExtract.exe fourierExtract.o util.o     alignSet.o dcd.o pdb.o  $(LDFLAGS) $(GSLLIB) lapack.a blas.a  -lstdc++ -lgfortran
 
 
 EncodeHMMLipidAllAtom: EncodeHMMLipidAllAtom.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a 
@@ -318,3 +324,6 @@ printLipidPairTraj.exe: printLipidPairTraj.o util.o dcd.o alignSet.o pdb.o geome
 
 splitAndAverageQDepData: splitAndAverageQDepData.o util.o
 	$(CC) $(LDFLAGS) -o splitAndAverageQDepData splitAndAverageQDepData.o util.o -lstdc++ -lgfortran
+
+AtomHeight: AtomHeight.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a 
+	$(CC) $(LDFLAGS) -o AtomHeight AtomHeight.o util.o dcd.o alignSet.o pdb.o lapack.a blas.a -lgfortran 
